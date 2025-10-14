@@ -1,0 +1,13 @@
+project/
+├── config/
+│   ├── api.php          # API线路配置
+│   ├── platform.php     # 平台规则配置
+│   └── switch.php       # 系统开关配置
+├── core/
+│   ├── strategy.php     # 智能选择策略
+│   └── requester.php    # 请求处理核心
+├── handlers/            # 新增：处理器文件夹
+│   └── M3U8Handler.php  # M3U8链接验证处理
+├── index.php           # 主入口文件
+├── disclaimer.php      # 免责声明
+└── ZJK.txt            # 自定义接口配置

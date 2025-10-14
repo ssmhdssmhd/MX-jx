@@ -1,0 +1,2 @@
+//https://jx.api1.com/?url=|6
+http://114.134.184.91:8004/MX.php/?url=|6
