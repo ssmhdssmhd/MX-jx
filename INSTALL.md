@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🚀 沫兮万能解析 — 新手安装指南
+# 🚀 沫兮万能解析 — 新手安装指南 v3.1.0
 
 > 从零开始，一步步带你把这个解析系统跑起来！
 >
-> **阅读时间约 10 分钟** · **最快 5 分钟完成部署**
+> **阅读时间约 10 分钟** · **最快 5 分钟完成部署** · **含可视化后台管理系统**
 
 [![查看 README](https://img.shields.io/badge/📖-README_项目说明-blue.svg)](README.md)
 [![PHP](https://img.shields.io/badge/PHP-7.4%20~%208.x-777BB4.svg)](https://www.php.net/)
@@ -112,28 +112,38 @@ git clone https://github.com/ssmhdssmhd/MX-jx.git
 git clone git@github.com:ssmhdssmhd/MX-jx.git
 ```
 
-### 📂 你会得到的文件
+### 📂 你会得到的文件（共 14 个文件）
 
 ```
 MX-jx/
-├── index.php              ← 入口文件（浏览器访问这个）
-├── disclaimer.php         ← 免责声明类（自动加载，无需管）
-├── ZJK.txt               ← 自定义接口（可选）
-├── README.md             ← 项目说明
-├── INSTALL.md            ← 本文件（你正在看的）
+├── index.php              ← 🎯 主入口文件（解析接口，浏览器访问这个）
+├── admin.php              ← 🔐 后台管理入口（默认密码: admin123）
+├── admin_main.php         ← 📊 后台页面模板（9个功能模块）
+├── admin_style.css        ← 🎨 后台样式文件
+├── disclaimer.php         ← 📝 免责声明类（自动加载，无需管）
+├── ZJK.txt               ← ⚙️ 自定义接口（可选）
+├── README.md             ← 📖 项目说明文档
+├── INSTALL.md            ← 🚀 本文件（新手安装指南）
+│
 ├── config/               ← 📂 配置文件文件夹
 │   ├── api.php           │   API 解析接口列表
 │   ├── platform.php      │   视频平台规则
-│   └── switch.php        │   系统开关
+│   ├── switch.php        │   系统开关配置
+│   └── admin.php         │   后台配置（密码/端口/权限等）
+│
 ├── core/                 ← 📂 核心程序文件夹
-│   ├── strategy.php      │   智能选优策略
+│   ├── strategy.php      │   智能选优策略引擎
 │   ├── requester.php     │   并发请求引擎
-│   └── cache.php         │   缓存模块
+│   └── cache.php         │   文件缓存模块
+│
 └── handlers/             ← 📂 处理器文件夹
     └── M3U8Handler.php   │   M3U8 直链处理
 ```
 
-> 💡 **你只需要关心两个文件**：`config/api.php`（接口列表）和 `config/switch.php`（开关配置），其他文件无需改动。
+> 💡 **作为新手你只需要关心三个入口**：
+> - 🔗 [index.php](index.php) — 解析接口（对外使用）
+> - 🔐 [admin.php](admin.php) — 后台管理（内部使用，默认密码 admin123）
+> - ⚙️ [config/api.php](config/api.php) + [config/switch.php](config/switch.php) — 配置文件（可在后台中可视化修改）
 
 ---
 
@@ -660,12 +670,21 @@ wwwroot/
 
 | 目标 | 文件 | 要不要改 |
 |------|------|----------|
-| 访问入口 | `index.php` | ❌ 不要改 |
-| 增减接口 | `config/api.php` | ✅ 可以改 |
-| 设置开关 | `config/switch.php` | ✅ 可以改 |
-| 平台匹配 | `config/platform.php` | ⭐ 按需修改 |
+| 解析入口 | `index.php` | ❌ 不要改 |
+| **后台入口** | `admin.php` | ✅ **首次登录请立即修改密码** |
+| 增减接口 | `config/api.php` | ✅ 可以改（后台也能可视化编辑） |
+| 设置开关 | `config/switch.php` | ✅ 可以改（后台也能可视化编辑） |
+| 平台匹配 | `config/platform.php` | ✅ 可以改（后台也能可视化编辑） |
+| 后台权限 | `config/admin.php` | ⚠️ 谨慎修改（存储密码哈希） |
 | 自定义接口 | `ZJK.txt` | ✅ 可以改 |
 | 核心逻辑 | `core/*.php` | ❌ 除非你懂 PHP |
+
+### 🧭 两个快速访问入口
+
+```
+👉 解析接口:   http://你的域名/index.php?url=视频链接
+👉 管理后台:   http://你的域名/admin.php  (默认密码: admin123)
+```
 
 ### 🛠️ 常用命令速查
 

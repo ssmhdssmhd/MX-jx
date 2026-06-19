@@ -2,9 +2,9 @@
 
 # 🎬 沫兮万能解析
 
-**PHP 智能线路切换系统 · 并发版 v3.0.0**
+**PHP 智能线路切换系统 · 并发版 v3.1.0**
 
-> 多线路并发请求 · 智能选优 · M3U8 直链检测 · 全平台视频解析
+> 多线路并发请求 · 智能选优 · M3U8 直链检测 · 全平台视频解析 · 可视化后台管理
 
 [![PHP](https://img.shields.io/badge/PHP-7.4%2B-777BB4?logo=php&logoColor=white)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -91,7 +91,10 @@ https://你的域名/index.php?url=https://www.douyin.com/video/xxx
 
 ```
 MX-jx/
-├── index.php                  # 🎯 主入口文件（请求路由）
+├── index.php                  # 🎯 主入口文件（解析接口）
+├── admin.php                  # 🔐 后台管理入口（密码登录）
+├── admin_main.php             # 📊 后台页面模板（9 个功能页）
+├── admin_style.css            # 🎨 后台页面样式
 ├── README.md                  # 📖 项目说明文档
 ├── INSTALL.md                 # 🚀 新手安装指南（推荐阅读）
 ├── disclaimer.php             # 📝 免责声明类
@@ -100,7 +103,8 @@ MX-jx/
 ├── config/                    # 📂 配置层
 │   ├── api.php                # API 线路配置（13主 + 2备）
 │   ├── platform.php           # 平台规则配置（17个视频平台）
-│   └── switch.php             # 系统开关配置
+│   ├── switch.php             # 系统开关配置
+│   └── admin.php              # 后台配置（密码/端口/权限等）
 │
 ├── core/                      # 📂 核心层
 │   ├── strategy.php           # 🧠 Strategy - 智能选择策略
@@ -111,14 +115,32 @@ MX-jx/
     └── M3U8Handler.php        # 🎬 M3U8 直链检测与响应
 ```
 
-### 核心类说明
+### 📊 项目文件统计（v3.1.0）
 
-| 类名 | 文件 | 职责 |
+| 类型 | 数量 | 说明 |
+|------|------|------|
+| **PHP 文件** | 10 个 | 入口 2 个 + 配置 4 个 + 核心 3 个 + 处理器 1 个 |
+| **CSS 文件** | 1 个 | 后台管理页面样式 |
+| **文本文档** | 3 个 | README、INSTALL 安装指南、ZJK.txt 自定义接口 |
+| **总文件数** | 14 个 | |
+
+### 核心类/文件说明
+
+| 文件 | 类型 | 职责 |
 |------|------|------|
 | `Strategy` | [core/strategy.php](core/strategy.php) | 策略决策引擎：平台匹配、API 聚合、响应选优 |
 | `Requester` | [core/requester.php](core/requester.php) | 请求执行引擎：`curl_multi` 并发请求、结果解析、格式统一 |
 | `SmartCache` | [core/cache.php](core/cache.php) | 缓存管理器：文件系统缓存、过期自动清理 |
 | `M3U8Handler` | [handlers/M3U8Handler.php](handlers/M3U8Handler.php) | M3U8 处理器：直链检测、快速响应 |
+
+### 后台管理文件（v3.1.0 新增）
+
+| 文件 | 类型 | 职责 |
+|------|------|------|
+| `admin.php` | [admin.php](admin.php) | 后台入口：密码登录验证、权限控制、操作分发 |
+| `admin_main.php` | [admin_main.php](admin_main.php) | 后台页面：9 个功能模块的 HTML 模板渲染 |
+| `admin_style.css` | [admin_style.css](admin_style.css) | 后台样式：渐变配色、开关组件、响应式布局 |
+| `admin 配置` | [config/admin.php](config/admin.php) | 后台配置：密码哈希、端口限制、IP白名单、会话时长等 |
 
 ---
 
@@ -397,6 +419,29 @@ https://jx2.example.com/?url=|8
 
 ## 📝 更新日志
 
+### v3.1.0 (2026-06-19) — 重大功能版本
+
+- ✨ 新增可视化后台管理系统（admin.php / admin_main.php / admin_style.css）
+- ✨ 后台支持 9 个功能模块：仪表盘、API线路、平台规则、系统开关、自定义接口、接口测试、备份日志、修改密码、后台设置
+- ✨ 管理员密码登录（MD5加密存储）+ 失败次数锁定（防暴力破解）
+- ✨ 支持自定义后台访问路径（可改为任意文件名，如 dashboard.php）
+- ✨ 支持端口访问限制（如 8899 端口）+ IP 白名单
+- ✨ 支持会话自动过期、操作日志记录、配置一键备份
+- ✨ 支持在线并发测试所有接口，展示响应时间和有效性
+- ✨ 所有配置文件均可在后台可视化编辑，无需手动写代码
+- 📚 新增 INSTALL.md 新手安装指南（全平台图文教程）
+- 📱 后台页面响应式设计，支持手机端访问
+
+### v3.0.1 (2026-06-19) — 稳定性修复
+
+- 🔧 修复 core/cache.php 中 `file_exists()` 缺少右括号导致的语法错误
+- 🔧 修复 SmartCache 读写 unserialize 缓存损坏时的报错问题
+- 🔧 修复 Strategy::getPriorityApi 平台配置缺少分隔符时的空指针问题
+- 🔧 修复 Strategy 默认开关值与配置文件不一致的问题
+- 🔒 在 index.php 中增加 SSRF 防护，限制仅 http/https 协议
+- 🔒 生产环境关闭 display_errors，启用日志记录
+- ✅ 全部 PHP 文件语法检查通过，运行时逻辑测试通过
+
 ### v3.0.0 (2024-01-01)
 
 - ✨ 全新并发请求架构，响应速度提升显著
@@ -414,8 +459,8 @@ https://jx2.example.com/?url=|8
 |------|------|
 | **开发者** | MX-射手沫蝴蝶 |
 | **联系方式** | QQ: 2094332348 |
-| **版本** | v3.0.0 |
-| **更新日期** | 2024-01-01 |
+| **当前版本** | v3.1.0 |
+| **更新日期** | 2026-06-19 |
 
 ---
 
