@@ -2,9 +2,9 @@
 
 # 🎬 沫兮万能解析
 
-**PHP 智能线路切换系统 · 并发版 v3.1.0**
+**PHP 智能线路切换系统 · NoAd 去广告 v4.0.0**
 
-> 多线路并发请求 · 智能选优 · M3U8 直链检测 · 全平台视频解析 · 可视化后台管理
+> 多线路并发请求 · 智能选优 · M3U8 直链检测 · 全平台视频解析 · 可视化后台管理 · M3U8 广告片段智能过滤
 
 [![PHP](https://img.shields.io/badge/PHP-7.4%2B-777BB4?logo=php&logoColor=white)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -137,10 +137,19 @@ MX-jx/
 
 | 文件 | 类型 | 职责 |
 |------|------|------|
-| `admin.php` | [admin.php](admin.php) | 后台入口：密码登录验证、权限控制、操作分发 |
-| `admin_main.php` | [admin_main.php](admin_main.php) | 后台页面：9 个功能模块的 HTML 模板渲染 |
-| `admin_style.css` | [admin_style.css](admin_style.css) | 后台样式：渐变配色、开关组件、响应式布局 |
-| `admin 配置` | [config/admin.php](config/admin.php) | 后台配置：密码哈希、端口限制、IP白名单、会话时长等 |
+| `admin.php` | [admin.php](admin.php) | 后台入口：密码登录验证 / 权限控制 / 操作分发 |
+| `admin_tpl.php` | [admin_tpl.php](admin_tpl.php) | 后台页面模板：12 个功能 Tab（含 NoAd 数据统计 / 解析源 / 广告规则） |
+| `admin_style.css` | [admin_style.css](admin_style.css) | 后台样式：渐变配色 / 开关组件 / 响应式布局 |
+| `admin 配置` | [config/admin.php](config/admin.php) | 后台配置：密码哈希 / 端口限制 / IP 白名单 / 会话时长 |
+| `noad_proxy.php` | [noad_proxy.php](noad_proxy.php) | NoAd 代理入口：M3U8 清洗代理 / TS 跨域代理 / JSON API |
+
+### NoAd 去广告核心（v4.0.0 新增）
+
+| 文件 | 类型 | 职责 |
+|------|------|------|
+| `NoAdParser` | [core/NoAdParser.php](core/NoAdParser.php) | M3U8 广告片段识别过滤 / 多源并发匹配 / 缓存加速 |
+| `Database` | [core/Database.php](core/Database.php) | SQLite 轻量持久层：解析源 / 广告规则 / 访问统计 / 日志 |
+| `NoAd 配置` | [config/noad.php](config/noad.php) | 去广告系统参数：阈值 / 超时 / 资源类型 / 默认规则 |
 
 ---
 
@@ -419,7 +428,19 @@ https://jx2.example.com/?url=|8
 
 ## 📝 更新日志
 
-### v3.1.0 (2026-06-19) — 重大功能版本
+### v4.0.0 (2026-06-19) — 重大版本：NoAd 去广告解析系统
+
+- ✨ **M3U8 广告片段智能过滤**：自动识别 `#EXTINF` 片段中的广告关键词（中文「片头广告 / 片中广告 / 片尾广告 / 推广」+ 英文 `ad/advert/promo/tracker` 等），自动从播放列表中剔除
+- ✨ **7 种资源类型分类管理**：电影 / 电视剧 / 综艺 / 动漫 / 纪录片 / 体育 / 短视频，可独立配置解析源
+- ✨ **多源自动匹配**：并发请求多个解析源，自动选择最快有效响应；可按 URL 关键词为特定平台分配专用解析源
+- ✨ **SQLite 轻量数据统计**：自动记录每次解析请求（时间 / IP / 来源 / 耗时 / 移除广告片段数），后台面板呈现近 7 天柱状图、Top 10 解析源、实时访问日志
+- ✨ **缓存加速**：30 分钟内相同 URL 请求直接返回缓存结果，显著降低延迟和外部请求量
+- ✨ **代理入口 `noad_proxy.php`**：支持 `mode=m3u8`（代理并清洗远程 M3U8）、`mode=ts`（TS 片段跨域代理）、`mode=api`（直接 JSON 响应）
+- ✨ **后台可视化规则管理**：广告规则库可动态添加 / 启用 / 删除，独立于默认内置规则
+- ✨ **全新后台 `admin_tpl.php`**：从 v3.1 升级到 12 个 Tab（总览 / NoAd 数据统计 / 去广告解析源 / 广告规则库 / NoAd 设置 / API 线路 / 平台规则 / 系统开关 / 自定义接口 / 备份日志 / 修改密码 / 后台设置）
+- ✨ **全兼容 PHP 7.4 ~ 8.x**，零依赖（仅需 pdo_sqlite 扩展即可启用统计，无 sqlite 时核心解析照常运行）
+
+### v3.1.0 (2026-06-19)
 
 - ✨ 新增可视化后台管理系统（admin.php / admin_main.php / admin_style.css）
 - ✨ 后台支持 9 个功能模块：仪表盘、API线路、平台规则、系统开关、自定义接口、接口测试、备份日志、修改密码、后台设置
@@ -459,7 +480,7 @@ https://jx2.example.com/?url=|8
 |------|------|
 | **开发者** | MX-射手沫蝴蝶 |
 | **联系方式** | QQ: 2094332348 |
-| **当前版本** | v3.1.0 |
+| **当前版本** | v4.0.0（含 NoAd 去广告系统） |
 | **更新日期** | 2026-06-19 |
 
 ---

@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🚀 沫兮万能解析 — 新手安装指南 v3.1.0
+# 🚀 沫兮万能解析 — 新手安装指南 v4.0.0
 
 > 从零开始，一步步带你把这个解析系统跑起来！
 >
-> **阅读时间约 10 分钟** · **最快 5 分钟完成部署** · **含可视化后台管理系统**
+> **阅读时间约 10 分钟** · **最快 5 分钟完成部署** · **含 NoAd 去广告 + 可视化后台**
 
 [![查看 README](https://img.shields.io/badge/📖-README_项目说明-blue.svg)](README.md)
 [![PHP](https://img.shields.io/badge/PHP-7.4%20~%208.x-777BB4.svg)](https://www.php.net/)

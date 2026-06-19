@@ -1,0 +1,14 @@
+# Runtime cache
+cache/*.php
+cache/*.json
+cache/noad.db
+cache/*.db
+cache/*_backup.json
+!cache/.keep
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.log
+Thumbs.db
