@@ -227,10 +227,11 @@ class Requester {
             return false;
         }
         
-        // 多种成功条件判断
-        return isset($json['code']) && $json['code'] == 200 ||
-               isset($json['url']) && !empty($json['url']) ||
-               isset($json['data']) && !empty($json['data']) ||
-               isset($json['title']) || isset($json['vurl']);
+        // 多种成功条件判断（显式括号，避免运算符优先级歧义）
+        return (isset($json['code']) && $json['code'] == 200) ||
+               (isset($json['url']) && !empty($json['url'])) ||
+               (isset($json['data']) && !empty($json['data'])) ||
+               isset($json['title']) ||
+               isset($json['vurl']);
     }
 }

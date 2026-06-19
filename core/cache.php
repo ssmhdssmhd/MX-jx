@@ -45,13 +45,18 @@ class SmartCache {
         $key = $this->generateKey($url);
         $cacheFile = $this->getCacheFile($key);
         
-        if (file_exists($cacheFile) {
-            $data = unserialize(file_get_contents($cacheFile));
-            if (time() - $data['timestamp'] < $this->cacheTime) {
-                return $data['content'];
+        if (file_exists($cacheFile)) {
+            $rawData = @file_get_contents($cacheFile);
+            if ($rawData !== false) {
+                $data = @unserialize($rawData);
+                if ($data !== false && is_array($data) && isset($data['timestamp'], $data['content'])) {
+                    if (time() - $data['timestamp'] < $this->cacheTime) {
+                        return $data['content'];
+                    }
+                }
             }
-            // 缓存过期，删除文件
-            unlink($cacheFile);
+            // 缓存过期或损坏，删除文件
+            @unlink($cacheFile);
         }
         return null;
     }
@@ -80,11 +85,23 @@ class SmartCache {
         $now = time();
         $cleaned = 0;
         
-        foreach ($files as $file) {
-            $data = unserialize(file_get_contents($file));
-            if ($now - $data['timestamp'] > $this->cacheTime) {
-                unlink($file);
-                $cleaned++;
+        if (!empty($files)) {
+            foreach ($files as $file) {
+                $rawData = @file_get_contents($file);
+                if ($rawData === false) {
+                    continue;
+                }
+                $data = @unserialize($rawData);
+                if ($data !== false && is_array($data) && isset($data['timestamp'])) {
+                    if ($now - $data['timestamp'] > $this->cacheTime) {
+                        @unlink($file);
+                        $cleaned++;
+                    }
+                } else {
+                    // 损坏的缓存文件直接删除
+                    @unlink($file);
+                    $cleaned++;
+                }
             }
         }
         

@@ -6,9 +6,11 @@
  * @version 3.0.0 2024-01-01
  */
 
-// 错误报告设置
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+// 错误报告设置（线上环境建议仅记录 fatal error，关闭显示）
+error_reporting(E_ERROR | E_WARNING | E_PARSE);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('html_errors', 0);
 
 // 引入配置文件
 require_once 'config/api.php';
@@ -44,6 +46,14 @@ if (empty($url)) {
 // 验证URL格式
 if (!filter_var($url, FILTER_VALIDATE_URL)) {
     $response = $strategy->generateErrorResponse(400, 'URL格式不正确');
+    echo json_encode($response);
+    exit;
+}
+
+// SSRF 防护：仅允许 http / https 协议
+$urlScheme = parse_url($url, PHP_URL_SCHEME);
+if (!in_array(strtolower($urlScheme), ['http', 'https'], true)) {
+    $response = $strategy->generateErrorResponse(400, '仅支持 http / https 协议');
     echo json_encode($response);
     exit;
 }

@@ -24,9 +24,10 @@ class Strategy {
             'enable_global_api' => true,
             'zjk_file_path' => 'ZJK.txt',
             'global_api_timeout' => 8,
-            'global_api_count' => 3,
+            'global_api_count' => 6,
             'enable_zjk_apis' => true,
-            'enable_unified_display' => true
+            'enable_unified_display' => true,
+            'enable_m3u8_direct' => true
         ];
     }
     
@@ -36,6 +37,9 @@ class Strategy {
     public function getPriorityApi($url) {
         foreach ($this->platformConfig as $platform => $rule) {
             $data = explode('|', $rule);
+            if (count($data) < 2) {
+                continue; // 跳过格式错误的配置
+            }
             if (strpos($url, $data[0]) !== false) {
                 return [
                     'api_name' => $data[1],
@@ -57,18 +61,22 @@ class Strategy {
         foreach ($this->apiConfig as $name => $config) {
             $apiCount++;
             $parts = explode('|', $config);
+            if (count($parts) < 1 || empty($parts[0])) {
+                continue; // 跳过格式错误的配置
+            }
             $url = str_replace('?url=', '?url={url}', $parts[0]);
             
-            // 如果是前3条API且开启总接口模式，使用全局超时时间
-            $timeout = $parts[1] ?? 5;
-            if ($this->switchConfig['enable_global_api'] && $apiCount <= $this->switchConfig['global_api_count']) {
-                $timeout = $this->switchConfig['global_api_timeout'];
+            // 如果是前N条API且开启总接口模式，使用全局超时时间
+            $timeout = isset($parts[1]) ? intval($parts[1]) : 5;
+            $isGlobal = $this->switchConfig['enable_global_api'] && $apiCount <= $this->switchConfig['global_api_count'];
+            if ($isGlobal) {
+                $timeout = intval($this->switchConfig['global_api_timeout']);
             }
             
             $configs[$name] = [
                 'url' => $url,
-                'timeout' => intval($timeout),
-                'is_global' => $this->switchConfig['enable_global_api'] && $apiCount <= $this->switchConfig['global_api_count']
+                'timeout' => $timeout,
+                'is_global' => $isGlobal
             ];
         }
         
@@ -186,7 +194,8 @@ class Strategy {
             'global_api_count' => $this->switchConfig['global_api_count'],
             'zjk_apis_enabled' => $this->switchConfig['enable_zjk_apis'],
             'zjk_file_exists' => file_exists($this->switchConfig['zjk_file_path']),
-            'unified_display_enabled' => $this->switchConfig['enable_unified_display']
+            'unified_display_enabled' => isset($this->switchConfig['enable_unified_display']) ? $this->switchConfig['enable_unified_display'] : true,
+            'm3u8_direct_enabled' => isset($this->switchConfig['enable_m3u8_direct']) ? $this->switchConfig['enable_m3u8_direct'] : true
         ];
     }
 }
