@@ -9,6 +9,10 @@
 [![PHP](https://img.shields.io/badge/PHP-7.4%2B-777BB4?logo=php&logoColor=white)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-✅%20Active-brightgreen.svg)]()
+[![安装指南](https://img.shields.io/badge/📖-新手安装指南-ff69b4.svg)](INSTALL.md)
+[![快速上手](https://img.shields.io/badge/🚀-5%E5%88%86%E9%92%9F%E9%83%A8%E7%BD%B2-orange.svg)](INSTALL.md#3%EF%B8%8F%E2%83%A8%E6%9C%AC%E8%BF%90%E8%A1%8C%E7%A8%8B)
+
+> 💡 **新手看这里**：第一次使用？👉 **[点击查看完整安装指南](INSTALL.md)**（中文，从零开始手把手教学）
 
 </div>
 
@@ -34,49 +38,52 @@
 
 ## 🚀 快速开始
 
+> 💡 **新手建议**：这里是最简操作步骤。如果看不懂或遇到问题，请阅读
+> **[📖 完整新手安装指南](INSTALL.md)**（包含 Windows/macOS/Linux/宝塔面板/虚拟主机
+> 全平台图文教程 + 常见问题 FAQ + 配置详解）。
+
 ### 环境要求
 
 - **PHP** >= 7.4（支持 `??` 运算符）
-- **cURL** 扩展（`curl_multi` 支持）
-- 允许 `allow_url_fopen` = On
-- 文件写入权限（缓存目录）
+- **cURL** 扩展（`curl_multi` 支持，核心依赖，必须启用）
+- Web 服务器（Nginx / Apache 均可）
 
-### 部署步骤
+> 🔍 **如何确认环境？** 新建 `phpinfo.php` 写入 `<?php phpinfo(); ?>`，访问后搜索 `curl`，看到 `enabled` 即为通过。详细步骤见 **[INSTALL.md](INSTALL.md#1%EF%B8%8F%E2%83%A3%E7%8E%AF%E5%A2%83%E8%A6%81%E6%B1%82)**
+
+### 部署步骤（3 步）
 
 ```bash
 # 1. 下载代码
 git clone https://github.com/ssmhdssmhd/MX-jx.git
 cd MX-jx
 
-# 2. 放到 PHP 环境目录
-# 例如: /var/www/html/mx-jx/
+# 2. 上传到 PHP 网站根目录（如宝塔的 /www/wwwroot/jx.example.com/）
+#    或本地测试：php -S 0.0.0.0:8080
 
-# 3. 设置权限
-chmod -R 755 .
-
-# 4. 访问测试
-# http://your-domain/index.php?url=https://v.qq.com/x/cover/xxx.html
+# 3. 浏览器测试（替换为你的域名或 localhost）
+# http://你的域名/index.php?url=https://v.qq.com/x/cover/mzc00200mp8vo9l/r00421m6n7k.html
 ```
+
+> 🪟 **Windows 用户** 推荐使用 **phpStudy**（小皮面板），详见 **[INSTALL.md · Windows 教程](INSTALL.md#%EF%B8%8F-windows-%E7%94%A8%E6%88%B7phpstudy-%E6%96%B9%E6%A1%88%E6%8E%A8%E8%8D%90-)**
+>
+> 🐧 **Linux 服务器** 推荐使用 **宝塔面板**，详见 **[INSTALL.md · 宝塔面板教程](INSTALL.md#%EF%B8%8F-%E6%96%B9%E6%A1%88%E4%B8%80%E5%AE%9D%E5%A1%94%E9%9D%A2%E6%9D%BF%E5%9B%BD%E5%86%85%E6%9C%8D%E5%8A%A1%E5%99%A8%E6%8E%A8%E8%8D%90)**
 
 ### 调用方式
 
 ```
-GET /index.php?url=<视频播放地址>
-POST /index.php  (body: url=<视频播放地址>)
+GET  /index.php?url=<视频播放页地址>
+POST /index.php  (body: url=<视频播放页地址>)
 ```
 
-**示例：**
+**示例（复制到浏览器测试）：**
 
-```bash
-# 腾讯视频
-curl "http://localhost/index.php?url=https://v.qq.com/x/cover/abc.html"
-
-# 爱奇艺
-curl "http://localhost/index.php?url=https://www.iqiyi.com/v_xxx.html"
-
-# 抖音
-curl "http://localhost/index.php?url=https://www.douyin.com/video/xxx"
 ```
+https://你的域名/index.php?url=https://v.qq.com/x/cover/mzc00200mp8vo9l/r00421m6n7k.html
+https://你的域名/index.php?url=https://www.iqiyi.com/v_xxx.html
+https://你的域名/index.php?url=https://www.douyin.com/video/xxx
+```
+
+> 📖 **更多使用场景**（配合播放器使用 / 作为 API 接入 / 自定义接口管理）见 **[INSTALL.md · 使用方法](INSTALL.md#5%EF%B8%8F%E2%83%A8%E4%BD%BF%E7%94%A8%E6%96%B9%E6%B3%95)**
 
 ---
 
@@ -85,6 +92,8 @@ curl "http://localhost/index.php?url=https://www.douyin.com/video/xxx"
 ```
 MX-jx/
 ├── index.php                  # 🎯 主入口文件（请求路由）
+├── README.md                  # 📖 项目说明文档
+├── INSTALL.md                 # 🚀 新手安装指南（推荐阅读）
 ├── disclaimer.php             # 📝 免责声明类
 ├── ZJK.txt                    # ⚙️ 自定义接口配置
 │
@@ -313,6 +322,9 @@ https://jx2.example.com/?url=|8
 - 路径包含 `.m3u8` 扩展名，或
 - 查询参数包含 `m3u8` 关键字，或
 - 路径中包含 `m3u8` 关键字
+
+> 💡 **更多问题解答**：以上为精简 FAQ。关于 500 错误 / 404 接口失败 / 权限问题 / 升级版本 / 多份部署等完整解答，请访问
+> **[📖 INSTALL.md · 完整常见问题](INSTALL.md#7%EF%B8%8F%E2%83%A8%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98-faq)**。
 
 ---
 
