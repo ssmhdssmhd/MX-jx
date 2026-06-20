@@ -497,29 +497,239 @@ class NoAdParser {
     }
 
     /**
-     * 单片段广告判定
+     * 单片段广告判定（增强版：关键词 + 时长 + DISCONTINUITY）
      */
     private function isAdSegment($context, $duration) {
         $contextLower = mb_strtolower($context);
 
-        // 1. 白名单优先
+        // 1. 白名单优先：命中白名单则永远不是广告
         foreach ($this->whitelistCache as $w) {
             if (stripos($contextLower, mb_strtolower($w)) !== false) return false;
         }
 
-        // 2. 极短视频（< 1 秒）+ 命中任意广告关键词，判定为广告
+        // 2. 关键词扫描
         $hitCount = 0;
+        $hitRules = array();
         foreach ($this->adRulesCache as $kw) {
-            if (stripos($contextLower, mb_strtolower($kw)) !== false) $hitCount++;
+            if (stripos($contextLower, mb_strtolower($kw)) !== false) {
+                $hitCount++;
+                $hitRules[] = $kw;
+            }
         }
 
         $threshold = (int)($this->config['ad_keyword_threshold'] ?? 2);
 
+        // 3. 规则命中：超阈值直接判为广告
         if ($hitCount >= $threshold) return true;
-        if ($hitCount >= 1 && $duration > 0 && $duration < 2.0) return true;
-        if ($hitCount >= 1 && $duration > 60.0) return true; // 超长 + 命中关键词也是广告（部分站点做法）
+
+        // 4. 时长判定：<= 1.5 秒的极短片段可能是广告片头/片尾
+        if ($duration > 0 && $duration <= 1.5 && $hitCount >= 1) return true;
+
+        // 5. 1.5 ~ 5 秒 + 命中关键词 = 可能是贴片广告
+        if ($duration > 1.5 && $duration <= 5.0 && $hitCount >= 1) return true;
+
+        // 6. 超长片段 > 60 秒 + 命中关键词 = 可能是插播广告视频（部分站点做法）
+        if ($hitCount >= 1 && $duration > 60.0) return true;
 
         return false;
+    }
+
+    /**
+     * 分析 M3U8：返回每个片段的详细信息（含时间戳、广告标记）
+     * 供后台 M3U8 解析页面做双栏对比展示
+     *
+     * 返回: array(
+     *   'raw_content'   => 原始 M3U8 文本
+     *   'total'         => 片段总数
+     *   'ad_count'      => 广告片段数
+     *   'keep_count'    => 保留片段数
+     *   'total_duration'=> 总时长(秒)
+     *   'ad_duration'   => 广告总时长(秒)
+     *   'keep_duration' => 保留总时长(秒)
+     *   'clean_m3u8'    => 过滤后纯净 m3u8 文本
+     *   'segments'      => array( array('idx','duration','uri','is_ad','reason',
+     *                                   'time_start','time_end','extinf_lines') ...)
+     *   'rules'         => 命中的广告关键词总数
+     * )
+     */
+    public function analyzeM3u8($m3u8Content) {
+        $lines = preg_split('/\r\n|\r|\n/', $m3u8Content);
+        $segments = array();
+        $totalSegments = 0;
+        $totalAdSegments = 0;
+        $totalDuration = 0.0;
+        $adDuration = 0.0;
+        $runningTimestamp = 0.0;
+        $totalRulesHit = 0;
+
+        $idx = 0;
+        $lineCount = count($lines);
+        $segIndex = 0;
+        $inDiscontinuityBlock = false;
+
+        while ($idx < $lineCount) {
+            $line = trim($lines[$idx]);
+            if ($line === '') { $idx++; continue; }
+
+            // 头部标签：直接跳过（保留到 raw，但不做片段解析）
+            if (strpos($line, '#EXTM3U') === 0) { $idx++; continue; }
+            if (strpos($line, '#EXT-X-DISCONTINUITY') === 0) {
+                // 可能开始/结束一个广告块，作为标记记录
+                $inDiscontinuityBlock = !$inDiscontinuityBlock;
+                $idx++; continue;
+            }
+            if (strpos($line, '#EXT-X-ENDLIST') === 0) { $idx++; break; }
+
+            // 其他全局头 (#EXT-X-VERSION, #EXT-X-TARGETDURATION, #EXT-X-MEDIA-SEQUENCE 等)
+            if (strpos($line, '#EXT-X-') === 0 && strpos($line, '#EXTINF') !== 0) {
+                $idx++; continue;
+            }
+            // 非 #EXT 注释
+            if (strpos($line, '#') === 0 && strpos($line, '#EXT') !== 0) {
+                $idx++; continue;
+            }
+
+            // ===== 片段解析：#EXTINF:duration,[title] =====
+            if (strpos($line, '#EXTINF') === 0) {
+                $extinfLines = array($line);
+                $duration = 0;
+                if (preg_match('/#EXTINF:([\d\.]+)/', $line, $m)) $duration = (float)$m[1];
+                $idx++;
+
+                // 收集附属标签（#EXT-X-KEY, #EXT-X-BYTERANGE, #EXT-X-DISCONTINUITY 等）
+                while ($idx < $lineCount) {
+                    $t = trim($lines[$idx]);
+                    if ($t === '') { $idx++; continue; }
+                    // 继续收集的条件：
+                    //   #EXT-X-KEY, #EXT-X-BYTERANGE, #EXT-X-DISCONTINUITY
+                    if (strpos($t, '#EXT-X-KEY') === 0 ||
+                        strpos($t, '#EXT-X-BYTERANGE') === 0 ||
+                        strpos($t, '#EXT-X-DISCONTINUITY') === 0) {
+                        $extinfLines[] = $t;
+                        $idx++;
+                        continue;
+                    }
+                    break;
+                }
+                // 下一行应该是 URI
+                $uri = '';
+                if ($idx < $lineCount) {
+                    $uri = trim($lines[$idx]);
+                    $idx++;
+                }
+
+                $totalSegments++;
+                $segIndex++;
+
+                $context = implode(' ', $extinfLines) . ' ' . $uri;
+                $isAd = $this->isAdSegment($context, $duration);
+
+                $timeStart = $runningTimestamp;
+                $timeEnd = $runningTimestamp + $duration;
+                $runningTimestamp = $timeEnd;
+                $totalDuration += $duration;
+
+                $reason = '';
+                if ($isAd) {
+                    $totalAdSegments++;
+                    $adDuration += $duration;
+                    $totalRulesHit++;
+                    if ($duration <= 1.5) $reason = '极短视频(≤1.5s)+ 命中规则';
+                    elseif ($duration <= 5.0) $reason = '短片段(≤5s)+ 命中规则';
+                    elseif ($duration > 60) $reason = '超长片段(>60s)+ 命中规则';
+                    else $reason = '命中广告关键词';
+                }
+
+                $segments[] = array(
+                    'idx'      => $segIndex,
+                    'duration' => $duration,
+                    'uri'      => $uri,
+                    'is_ad'    => $isAd,
+                    'reason'   => $reason,
+                    'time_start' => $timeStart,
+                    'time_end'   => $timeEnd,
+                    'extinf_lines' => $extinfLines,
+                );
+                continue;
+            }
+
+            // 裸 URI 行（无 EXTINF），兼容处理
+            if (strpos($line, '#') !== 0 && $line !== '') {
+                $totalSegments++;
+                $segIndex++;
+                $isAd = $this->isAdSegment($line, 0);
+                $segments[] = array(
+                    'idx' => $segIndex, 'duration' => 0, 'uri' => $line,
+                    'is_ad' => $isAd, 'reason' => $isAd ? '命中关键词' : '',
+                    'time_start' => $runningTimestamp, 'time_end' => $runningTimestamp,
+                    'extinf_lines' => array(),
+                );
+                if ($isAd) { $totalAdSegments++; $totalRulesHit++; }
+                $idx++;
+                continue;
+            }
+
+            $idx++;
+        }
+
+        // 过滤后内容（纯视频部分）
+        $cleanLines = array();
+        $cleanLines[] = '#EXTM3U';
+        $cleanLines[] = '# Generated-By: Noad M3U8 Ad-Cleaner v4.1';
+        $cleanLines[] = '# Ad-Segments-Removed: ' . $totalAdSegments . ' / ' . $totalSegments;
+        foreach ($segments as $s) {
+            if (!$s['is_ad']) {
+                foreach ($s['extinf_lines'] as $el) $cleanLines[] = $el;
+                $cleanLines[] = $s['uri'];
+            }
+        }
+        $cleanLines[] = '#EXT-X-ENDLIST';
+        $cleanM3u8 = implode("\n", $cleanLines);
+
+        return array(
+            'raw_content'   => $m3u8Content,
+            'total'         => $totalSegments,
+            'ad_count'      => $totalAdSegments,
+            'keep_count'    => $totalSegments - $totalAdSegments,
+            'total_duration'=> round($totalDuration, 3),
+            'ad_duration'   => round($adDuration, 3),
+            'keep_duration' => round($totalDuration - $adDuration, 3),
+            'clean_m3u8'    => $cleanM3u8,
+            'segments'      => $segments,
+            'rules'         => $totalRulesHit,
+        );
+    }
+
+    /**
+     * 获取远程 M3U8 并分析（直接 URL 解析）
+     */
+    public function fetchAndAnalyze($url, $timeout = 15) {
+        $content = $this->fetchUrl($url, $timeout);
+        if ($content === false) return null;
+        // 如果内容不是 m3u8（可能是 JSON/HTML），尝试从 JSON 中提取
+        if (strpos($content, '#EXTM3U') === false) {
+            $json = json_decode($content, true);
+            if (is_array($json)) {
+                $nestedUrl = $this->pickPlayUrlFromJson($json);
+                if ($nestedUrl !== null && $nestedUrl !== '') {
+                    $content2 = $this->fetchUrl($nestedUrl, $timeout);
+                    if ($content2 !== false) $content = $content2;
+                }
+            }
+        }
+        if (strpos($content, '#EXTM3U') === false) return null;
+        return $this->analyzeM3u8($content);
+    }
+
+    /**
+     * 辅助：格式化秒数 -> HH:MM:SS
+     */
+    public function formatTime($seconds) {
+        $seconds = max(0, (float)$seconds);
+        $h = floor($seconds / 3600);
+        $m = floor(($seconds - $h * 3600) / 60);
+        $s = $seconds - $h * 3600 - $m * 60;
+        return sprintf('%02d:%02d:%04.1f', $h, $m, $s);
     }
 
     // ========== 缓存系统 ==========

@@ -139,10 +139,40 @@ class Database {
             status TEXT DEFAULT 'ok'
         );");
 
+        // 表5: 资源站点（关联站点，用于 M3U8 解析下拉选择）
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS noad_sites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            short_code TEXT DEFAULT '',
+            base_url TEXT DEFAULT '',
+            match_pattern TEXT DEFAULT '',
+            enabled INTEGER DEFAULT 1,
+            parse_count INTEGER DEFAULT 0,
+            remark TEXT DEFAULT '',
+            created_at INTEGER DEFAULT 0,
+            updated_at INTEGER DEFAULT 0
+        );");
+
+        // 表6: M3U8 解析日志（记录手动解析的历史）
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS noad_parse_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parse_time INTEGER DEFAULT 0,
+            site_id INTEGER DEFAULT 0,
+            site_name TEXT DEFAULT '',
+            input_url TEXT DEFAULT '',
+            total_segments INTEGER DEFAULT 0,
+            ad_segments INTEGER DEFAULT 0,
+            keep_segments INTEGER DEFAULT 0,
+            total_duration REAL DEFAULT 0,
+            ad_duration REAL DEFAULT 0,
+            ip TEXT DEFAULT ''
+        );");
+
         // 索引
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_stats_date   ON noad_stats(stat_date);");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_sources_type  ON noad_sources(type_id);");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_log_time      ON noad_access_log(access_time DESC);");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_parse_time    ON noad_parse_log(parse_time DESC);");
     }
 
     /**
@@ -171,6 +201,20 @@ class Database {
                  VALUES (?,?,?,?,?)"
             );
             $stmt->execute(array($kw, 'keyword', 1, 0, $now));
+        }
+
+        // 默认资源站点（供 M3U8 解析页的下拉使用）
+        $defaultSites = array(
+            array('name' => '优质资源',      'short_code' => 'yzzy',   'remark' => '通用优质资源聚合'),
+            array('name' => '官方资源站',    'short_code' => 'gfzy',   'remark' => '官方高清资源'),
+            array('name' => '第三方解析',    'short_code' => 'dsf',    'remark' => '第三方视频解析源'),
+        );
+        foreach ($defaultSites as $s) {
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO noad_sites(name,short_code,base_url,match_pattern,enabled,
+                 parse_count,remark,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+            );
+            $stmt->execute(array($s['name'], $s['short_code'], '', '', 1, 0, $s['remark'], $now, $now));
         }
     }
 
@@ -425,6 +469,109 @@ class Database {
         $this->pdo->exec("DELETE FROM noad_access_log");
         $this->pdo->exec("DELETE FROM noad_stats");
         $this->pdo->exec("VACUUM");
+        return true;
+    }
+
+    // ========== 资源站点 CRUD ==========
+
+    public function getSites($onlyEnabled = false) {
+        $sql = "SELECT * FROM noad_sites";
+        if ($onlyEnabled) $sql .= " WHERE enabled=1";
+        $sql .= " ORDER BY parse_count DESC, id ASC";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public function getSiteById($id) {
+        $stmt = $this->pdo->prepare("SELECT * FROM noad_sites WHERE id=?");
+        $stmt->execute(array($id));
+        return $stmt->fetch();
+    }
+
+    public function addSite($data) {
+        $now = time();
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO noad_sites(name,short_code,base_url,match_pattern,enabled,
+             parse_count,remark,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+        );
+        $stmt->execute(array(
+            trim($data['name'] ?? ''),
+            trim($data['short_code'] ?? ''),
+            trim($data['base_url'] ?? ''),
+            trim($data['match_pattern'] ?? ''),
+            (int)($data['enabled'] ?? 1),
+            0,
+            trim($data['remark'] ?? ''),
+            $now, $now
+        ));
+        return $this->pdo->lastInsertId();
+    }
+
+    public function updateSite($id, $data) {
+        $now = time();
+        $stmt = $this->pdo->prepare(
+            "UPDATE noad_sites SET name=?, short_code=?, base_url=?, match_pattern=?,
+             enabled=?, remark=?, updated_at=? WHERE id=?"
+        );
+        return $stmt->execute(array(
+            trim($data['name'] ?? ''),
+            trim($data['short_code'] ?? ''),
+            trim($data['base_url'] ?? ''),
+            trim($data['match_pattern'] ?? ''),
+            (int)($data['enabled'] ?? 1),
+            trim($data['remark'] ?? ''),
+            $now, $id
+        ));
+    }
+
+    public function deleteSite($id) {
+        $stmt = $this->pdo->prepare("DELETE FROM noad_sites WHERE id=?");
+        return $stmt->execute(array($id));
+    }
+
+    public function toggleSite($id) {
+        $stmt = $this->pdo->prepare("UPDATE noad_sites SET enabled = 1 - enabled WHERE id=?");
+        return $stmt->execute(array($id));
+    }
+
+    public function incrementSiteParseCount($id) {
+        if ($id <= 0) return;
+        $stmt = $this->pdo->prepare("UPDATE noad_sites SET parse_count = parse_count + 1 WHERE id=?");
+        $stmt->execute(array($id));
+    }
+
+    // ========== M3U8 解析日志 CRUD ==========
+
+    public function logM3u8Parse($siteId, $siteName, $inputUrl, $totalSegments,
+                                   $adSegments, $keepSegments, $totalDuration, $adDuration) {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+        $now = time();
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO noad_parse_log(parse_time,site_id,site_name,input_url,
+             total_segments,ad_segments,keep_segments,total_duration,ad_duration,ip)
+             VALUES (?,?,?,?,?,?,?,?,?,?)"
+        );
+        $stmt->execute(array(
+            $now, (int)$siteId, $siteName, $inputUrl,
+            (int)$totalSegments, (int)$adSegments, (int)$keepSegments,
+            (float)$totalDuration, (float)$adDuration, $ip
+        ));
+        // 同步累计资源站点的使用次数
+        if ((int)$siteId > 0) $this->incrementSiteParseCount((int)$siteId);
+        return $this->pdo->lastInsertId();
+    }
+
+    public function getParseLog($limit = 50) {
+        $stmt = $this->pdo->prepare(
+            "SELECT * FROM noad_parse_log ORDER BY parse_time DESC LIMIT ?"
+        );
+        $stmt->execute(array($limit));
+        return $stmt->fetchAll();
+    }
+
+    public function clearParseLog() {
+        $this->pdo->exec("DELETE FROM noad_parse_log");
         return true;
     }
 }

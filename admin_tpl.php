@@ -90,6 +90,10 @@ code.monocode { background:#f5f5fa; padding:2px 6px; border-radius:4px; font-siz
 
     <div class="tabs-nav" id="tabsNav">
         <button data-tab="dashboard"  class="<?php echo $page==='dashboard'?'active':''; ?>">📊 总览</button>
+        <button data-tab="m3u8_parse" class="<?php echo $page==='m3u8_parse'?'active':''; ?>">📼 M3U8 解析</button>
+        <button data-tab="sites" class="<?php echo $page==='sites'?'active':''; ?>">🔗 资源站点</button>
+        <button data-tab="parse_log" class="<?php echo $page==='parse_log'?'active':''; ?>">📄 解析日志</button>
+        <button data-tab="cache_mgr" class="<?php echo $page==='cache_mgr'?'active':''; ?>">💽 缓存管理</button>
         <button data-tab="noad_stats" class="<?php echo $page==='noad_stats'?'active':''; ?>">📈 NoAd 数据统计</button>
         <button data-tab="noad_sources" class="<?php echo $page==='noad_sources'?'active':''; ?>">🔌 去广告解析源</button>
         <button data-tab="noad_rules" class="<?php echo $page==='noad_rules'?'active':''; ?>">🚫 广告规则库</button>
@@ -655,6 +659,193 @@ code.monocode { background:#f5f5fa; padding:2px 6px; border-radius:4px; font-siz
         </form>
     </div>
 
+    <?php
+    // ========= v4.1. M3U8 解析（双栏对比 + 时间戳 + 广告片段高亮）=========
+    ?>
+    <div class="tab-panel <?php echo $page==='m3u8_parse'?'active':''; ?>" id="tab-m3u8_parse">
+        <h2>📼 M3U8 解析（去插播广告分析）</h2>
+
+        <div class="panel">
+            <h3>🎯 输入 M3U8 链接</h3>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <input type="text" id="m3u8Url" placeholder="例如：https://example.com/video/playlist.m3u8"
+                       style="flex:1; min-width:360px;" value="">
+                <select id="siteId" style="min-width:180px;">
+                    <option value="0">关联站点 / 资源来源（可选）</option>
+                    <?php if (!empty($sites)): foreach ($sites as $s):
+                        if (empty($s['enabled'])) continue; ?>
+                        <option value="<?php echo (int)$s['id']; ?>">
+                            <?php echo htmlspecialchars($s['name']); ?>
+                            <?php if (!empty($s['short_code'])) echo '(' . htmlspecialchars($s['short_code']) . ')'; ?>
+                        </option>
+                    <?php endforeach; endif; ?>
+                </select>
+                <button type="button" onclick="parseM3U8()" class="btn-primary-sm" style="padding:8px 16px; font-size:14px; background:#667eea;">🔍 解析 M3U8</button>
+                <span id="parseStatus" style="font-size:13px; color:#888;">等待解析...</span>
+            </div>
+            <p style="font-size:12px; color:#888; margin-top:8px;">💡 支持主播播放列表(多码率) 和媒体分片列表；解析后可对比过滤前后内容；并自动按累计时长计算时间戳。</p>
+        </div>
+
+        <div id="parseResultWrap" style="display:none;">
+            <div class="panel">
+                <h3>📊 解析统计</h3>
+                <div class="grid-flow" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+                    <div class="stat-card" style="padding:14px;"><div class="label">总片段数</div><div class="num" id="sTotal" style="font-size:22px;">0</div></div>
+                    <div class="stat-card v2" style="padding:14px; background:linear-gradient(135deg,#ef5350,#e53935);"><div class="label">广告片段</div><div class="num" id="sAd" style="font-size:22px;">0 <span style="font-size:12px;" id="sAdTime"></span></div></div>
+                    <div class="stat-card v3" style="padding:14px; background:linear-gradient(135deg,#4caf50,#66bb6a);"><div class="label">保留片段</div><div class="num" id="sKeep" style="font-size:22px;">0 <span style="font-size:12px;" id="sKeepTime"></span></div></div>
+                    <div class="stat-card v4" style="padding:14px;"><div class="label">总时长</div><div class="num" id="sDuration" style="font-size:22px;">0</div></div>
+                    <div class="stat-card v5" style="padding:14px;"><div class="label">站点</div><div class="num" id="sSite" style="font-size:15px;">—</div></div>
+                    <div class="stat-card v6" style="padding:14px;"><div class="label">规则命中</div><div class="num" id="sRules" style="font-size:22px;">0</div></div>
+                </div>
+                <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="button" class="btn-primary-sm" onclick="copyToClipboard('rawContent','原始内容')" style="background:#ff9800; padding:8px 16px; font-size:13px;">📄 复制原始 M3U8 内容</button>
+                    <button type="button" class="btn-primary-sm" onclick="copyToClipboard('cleanContent','过滤后内容')" style="background:#2196f3; padding:8px 16px; font-size:13px;">🧹 复制过滤后的 M3U8 内容</button>
+                    <button type="button" class="btn-secondary-sm" onclick="document.getElementById('rawContent').style.display=(document.getElementById('rawContent').style.display==='none'?'block':'none');">👁️ 原始内容切换</button>
+                    <button type="button" class="btn-secondary-sm" onclick="document.getElementById('segmentsWrap').style.display=(document.getElementById('segmentsWrap').style.display==='none'?'block':'none');">👁️ 片段详情切换</button>
+                </div>
+            </div>
+
+            <div class="panel" id="segmentsWrap">
+                <h3>📼 原始 M3U8 内容 <span style="font-size:12px; color:#888; font-weight:400;" id="rawLineCount">0 行</span></h3>
+                <pre id="rawContent" style="background:#f0f0fa; padding:14px; border-radius:8px; font-size:12px; max-height:480px; overflow:auto; white-space:pre;"></pre>
+
+                <h3 style="margin-top:24px;">⏱️ 带时间戳信息的 M3U8 内容 <span style="font-size:12px; color:#888; font-weight:400;" id="tsLineCount">0 行</span>
+                    <span class="badge badge-red" style="margin-left:8px;">已删除的广告信息</span>
+                </h3>
+                <div id="timestampContent" style="background:#fff; padding:14px; border-radius:8px; border:1px solid #e9ecef; max-height:640px; overflow:auto; font-size:12px; line-height:1.7;"></div>
+            </div>
+
+            <div class="panel">
+                <h3>🧹 过滤后纯净 M3U8（可直接播放）</h3>
+                <pre id="cleanContent" style="background:#e8f5e9; padding:14px; border-radius:8px; font-size:12px; max-height:420px; overflow:auto; white-space:pre;"></pre>
+            </div>
+        </div>
+    </div>
+
+    <?php
+    // ========= v4.1. 资源站点管理 =========
+    ?>
+    <div class="tab-panel <?php echo $page==='sites'?'active':''; ?>" id="tab-sites">
+        <h2>🔗 资源站点（关联 M3U8 解析）</h2>
+        <div class="panel">
+            <h3>➕ 添加 / 编辑资源站点</h3>
+            <form method="post" id="siteForm">
+                <input type="hidden" name="action" value="save_site">
+                <input type="hidden" name="site_id" id="siteIdInput" value="0">
+                <table class="data-table">
+                    <tr><td style="width:120px;">站点名称 *</td><td><input type="text" name="site_name" id="siteName" required style="width:100%; max-width:420px;" placeholder="例：优质资源聚合"></td></tr>
+                    <tr><td>短代码</td><td><input type="text" name="site_code" id="siteCode" style="width:100%; max-width:240px;" placeholder="例：yzzy"></td></tr>
+                    <tr><td>基础 URL</td><td><input type="text" name="site_url" id="siteUrl" style="width:100%; max-width:520px;" placeholder="https://..."></td></tr>
+                    <tr><td>匹配规则</td><td><input type="text" name="site_pattern" id="sitePattern" style="width:100%; max-width:420px;" placeholder="例：.m3u8,.mp4"></td></tr>
+                    <tr><td>备注</td><td><input type="text" name="site_remark" id="siteRemark" style="width:100%; max-width:520px;" placeholder="备注说明"></td></tr>
+                    <tr><td>启用</td><td><input type="checkbox" name="site_enabled" id="siteEnabled" checked></td></tr>
+                </table>
+                <div style="margin-top:12px;">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px; padding:8px 16px;">💾 保存站点</button>
+                    <button type="button" class="btn-secondary-sm" onclick="resetSiteForm()" style="margin-left:8px; padding:8px 16px; font-size:14px;">🔄 重置表单</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="panel">
+            <h3>📋 已有资源站点（共 <?php echo count($sites); ?> 个）</h3>
+            <?php if (empty($sites)): ?>
+                <p style="color:#888;">暂无资源站点。请先添加一个。</p>
+            <?php else: ?>
+                <table class="data-table">
+                    <thead><tr><th>ID</th><th>名称</th><th>短代码</th><th>基础 URL</th><th>匹配规则</th><th>使用次数</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($sites as $s): ?>
+                    <tr>
+                        <td><?php echo (int)$s['id']; ?></td>
+                        <td><strong><?php echo htmlspecialchars($s['name']); ?></strong></td>
+                        <td><?php echo htmlspecialchars($s['short_code'] ?? '-'); ?></td>
+                        <td style="max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"><?php echo htmlspecialchars($s['base_url'] ?? '-'); ?></td>
+                        <td><?php echo htmlspecialchars($s['match_pattern'] ?? '-'); ?></td>
+                        <td><?php echo (int)($s['parse_count'] ?? 0); ?></td>
+                        <td><?php echo !empty($s['enabled']) ? '<span class="badge badge-green">启用</span>' : '<span class="badge badge-red">禁用</span>'; ?></td>
+                        <td style="max-width:200px; font-size:12px; color:#666;"><?php echo htmlspecialchars($s['remark'] ?? ''); ?></td>
+                        <td style="white-space:nowrap;">
+                            <button type="button" class="btn-primary-sm" onclick="editSite(<?php echo (int)$s['id']; ?>,'<?php echo htmlspecialchars(addslashes($s['name'])); ?>','<?php echo htmlspecialchars(addslashes($s['short_code'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['base_url'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['match_pattern'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['remark'] ?? '')); ?>',<?php echo (int)($s['enabled'] ?? 0); ?>)">✏️ 编辑</button>
+                            <form method="post" style="display:inline; margin-left:4px;" onsubmit="return confirm('确认删除该站点？');"><input type="hidden" name="action" value="delete_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-danger-sm">🗑️</button></form>
+                            <form method="post" style="display:inline; margin-left:4px;"><input type="hidden" name="action" value="toggle_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-secondary-sm">🔄</button></form>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <?php
+    // ========= v4.1. 解析日志 =========
+    ?>
+    <div class="tab-panel <?php echo $page==='parse_log'?'active':''; ?>" id="tab-parse_log">
+        <h2>📄 解析日志（最近 50 条）</h2>
+        <div class="panel">
+            <h3>🕒 手动 M3U8 解析操作记录</h3>
+            <?php if (empty($parseLogs)): ?>
+                <p style="color:#888;">暂无解析记录。在「📼 M3U8 解析」页面解析一个 M3U8 链接后，日志将出现在这里。</p>
+            <?php else: ?>
+                <table class="data-table">
+                    <thead><tr><th>时间</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th><th>总时长</th><th>广告时长</th><th>IP</th><th>URL</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($parseLogs as $l): ?>
+                    <tr>
+                        <td><?php echo date('Y-m-d H:i:s', (int)$l['parse_time']); ?></td>
+                        <td><?php echo htmlspecialchars($l['site_name'] ?? '-'); ?></td>
+                        <td><?php echo (int)$l['total_segments']; ?></td>
+                        <td style="color:#e53935; font-weight:600;"><?php echo (int)$l['ad_segments']; ?></td>
+                        <td style="color:#43a047; font-weight:600;"><?php echo (int)$l['keep_segments']; ?></td>
+                        <td><?php echo number_format((float)($l['total_duration'] ?? 0), 1); ?>s</td>
+                        <td><?php echo number_format((float)($l['ad_duration'] ?? 0), 1); ?>s</td>
+                        <td><?php echo htmlspecialchars($l['ip'] ?? '-'); ?></td>
+                        <td style="max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:#666;"><?php echo htmlspecialchars($l['input_url'] ?? ''); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <div style="margin-top:14px;">
+                    <form method="post" onsubmit="return confirm('确认清空所有解析日志？');">
+                        <input type="hidden" name="action" value="clear_parse_log">
+                        <button type="submit" class="btn-danger-sm" style="padding:8px 16px; font-size:13px;">🗑️ 清空所有解析日志</button>
+                    </form>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <?php
+    // ========= v4.1. 缓存管理 =========
+    ?>
+    <div class="tab-panel <?php echo $page==='cache_mgr'?'active':''; ?>" id="tab-cache_mgr">
+        <h2>💽 缓存管理</h2>
+        <div class="panel">
+            <h3>🧹 NoAd 缓存清理</h3>
+            <p style="font-size:13px; color:#666;">所有 /cache/noad_*.cache 文件（包含解析结果缓存）都将被删除。下次解析将直接调用外部解析源，确保返回最新内容。</p>
+            <form method="post" onsubmit="return confirm('确认清理所有 NoAd 缓存文件？');">
+                <input type="hidden" name="action" value="clear_noad_cache">
+                <button type="submit" class="btn-danger-sm" style="padding:10px 24px; font-size:14px;">🧹 清理 NoAd 缓存</button>
+            </form>
+        </div>
+        <div class="panel">
+            <h3>🔧 当前配置信息</h3>
+            <table class="data-table">
+                <tr><th style="width:180px;">项目</th><th>值</th></tr>
+                <tr><td>NoAd 总开关</td><td><?php echo !empty($noadConfig['noad_enabled']) ? '<span class="badge badge-green">已启用</span>' : '<span class="badge badge-red">已关闭</span>'; ?></td></tr>
+                <tr><td>资源类型数</td><td><?php echo count($resourceTypes); ?> 种</td></tr>
+                <tr><td>解析源数</td><td><?php echo count($noadSources); ?> 个</td></tr>
+                <tr><td>广告规则数</td><td><?php echo count($adRules); ?> 条</td></tr>
+                <tr><td>资源站点数</td><td><?php echo count($sites); ?> 个</td></tr>
+                <tr><td>缓存有效期</td><td><?php echo (int)($noadConfig['cache_ttl'] ?? 1800); ?> 秒</td></tr>
+                <tr><td>单源超时</td><td><?php echo (int)($noadConfig['request_timeout'] ?? 10); ?> 秒</td></tr>
+                <tr><td>PHP 版本</td><td><?php echo htmlspecialchars(PHP_VERSION); ?></td></tr>
+                <tr><td>SQLite 扩展</td><td><?php echo extension_loaded('pdo_sqlite') ? '<span class="badge badge-green">可用</span>' : '<span class="badge badge-yellow">未加载</span>'; ?></td></tr>
+            </table>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -715,6 +906,122 @@ function resetSourceForm() {
     document.getElementById('srcMatch').value = '';
     document.getElementById('srcRemark').value = '';
     document.getElementById('srcEnabled').checked = true;
+}
+
+// ======== M3U8 解析逻辑（AJAX 调用 admin.php 的 action=ajax_parse_m3u8）========
+function parseM3U8() {
+    var url = document.getElementById('m3u8Url').value.trim();
+    if (!url) { alert('请输入 M3U8 URL'); return; }
+    var siteId = document.getElementById('siteId').value;
+    var statusEl = document.getElementById('parseStatus');
+    statusEl.textContent = '⏳ 正在解析，请稍候...';
+    statusEl.style.color = '#2196f3';
+    document.getElementById('parseResultWrap').style.display = 'block';
+
+    // 构造 POST 请求
+    var form = new FormData();
+    form.append('action', 'ajax_parse_m3u8');
+    form.append('m3u8_url', url);
+    form.append('site_id', siteId);
+
+    fetch(window.location.href, { method: 'POST', body: form })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (!data || data.code !== 200) {
+                statusEl.textContent = '❌ ' + (data.msg || '解析失败');
+                statusEl.style.color = '#e53935';
+                return;
+            }
+            // 填充统计卡片
+            document.getElementById('sTotal').textContent = data.total || 0;
+            document.getElementById('sAd').childNodes[0].nodeValue = (data.ad_count || 0) + ' ';
+            document.getElementById('sAdTime').textContent = '(' + (data.ad_duration || '00:00:00') + ')';
+            document.getElementById('sKeep').childNodes[0].nodeValue = (data.keep_count || 0) + ' ';
+            document.getElementById('sKeepTime').textContent = '(' + (data.keep_duration || '00:00:00') + ')';
+            document.getElementById('sDuration').textContent = data.total_duration || '00:00:00';
+            document.getElementById('sSite').textContent = data.site_name || '未关联';
+            document.getElementById('sRules').textContent = data.rules || 0;
+
+            // 填充原始内容
+            var rawEl = document.getElementById('rawContent');
+            rawEl.textContent = data.raw_content || '';
+            var rawLines = (data.raw_content || '').split('\n').length;
+            document.getElementById('rawLineCount').textContent = rawLines + ' 行';
+
+            // 填充过滤后内容
+            document.getElementById('cleanContent').textContent = data.clean_m3u8 || '';
+
+            // 构造时间戳信息内容（广告片段红色高亮）
+            var tsEl = document.getElementById('timestampContent');
+            var html = '';
+            var tsLineCount = 0;
+            if (data.segments && data.segments.length) {
+                data.segments.forEach(function(seg){
+                    if (seg.is_ad) {
+                        html += '<div style="background:#ffebee; padding:4px 8px; border-left:3px solid #e53935; margin:2px 0; border-radius:4px;">';
+                        html += '<span style="color:#e53935; font-weight:600;">🚫 广告</span> ';
+                        html += '<span style="color:#c62828;">⏱ 时间信息: ' + (seg.time_start || '?') + ' -- ' + (seg.time_end || '?') + '</span><br>';
+                        html += '<span style="color:#c62828;">#EXTINF:' + (seg.duration ? seg.duration.toFixed(6) : '0') + ',</span><br>';
+                        html += '<span style="color:#c62828; font-size:12px;">' + (seg.uri || '') + '</span>';
+                        if (seg.reason) html += '<br><span style="font-size:11px; color:#e57373;">原因: ' + seg.reason + '</span>';
+                        html += '</div>';
+                        tsLineCount += 3;
+                    } else {
+                        html += '<div style="padding:4px 8px; margin:2px 0; border-radius:4px; background:#f5f5fa;">';
+                        html += '<span style="color:#2e7d32; font-size:12px;">⏱ 时间信息: ' + (seg.time_start || '?') + ' -- ' + (seg.time_end || '?') + '</span><br>';
+                        html += '<span style="color:#1565c0;">#EXTINF:' + (seg.duration ? seg.duration.toFixed(6) : '0') + ',</span><br>';
+                        html += '<span style="font-size:12px;">' + (seg.uri || '') + '</span>';
+                        html += '</div>';
+                        tsLineCount += 3;
+                    }
+                });
+            } else {
+                html = '<span style="color:#888;">（无片段信息）</span>';
+            }
+            tsEl.innerHTML = html;
+            document.getElementById('tsLineCount').textContent = tsLineCount + ' 行';
+
+            statusEl.textContent = '✅ 解析完成';
+            statusEl.style.color = '#43a047';
+        })
+        .catch(function(err){
+            statusEl.textContent = '❌ 请求失败: ' + err;
+            statusEl.style.color = '#e53935';
+        });
+}
+
+// ======== 复制到剪贴板 ========
+function copyToClipboard(elId, label){
+    var el = document.getElementById(elId);
+    if (!el) return;
+    var text = el.textContent || '';
+    if (!text) { alert('暂无' + label + '可复制'); return; }
+    var temp = document.createElement('textarea');
+    temp.value = text;
+    document.body.appendChild(temp);
+    temp.select();
+    try {
+        document.execCommand('copy');
+        alert(label + ' 已复制到剪贴板（' + text.length + ' 字符）');
+    } catch(e) { alert('复制失败，请手动选择'); }
+    document.body.removeChild(temp);
+}
+
+// ======== 站点表单编辑/重置 ========
+function editSite(id, name, code, url, pattern, remark, enabled){
+    document.getElementById('siteIdInput').value = id;
+    document.getElementById('siteName').value = name || '';
+    document.getElementById('siteCode').value = code || '';
+    document.getElementById('siteUrl').value = url || '';
+    document.getElementById('sitePattern').value = pattern || '';
+    document.getElementById('siteRemark').value = remark || '';
+    document.getElementById('siteEnabled').checked = !!enabled;
+    document.querySelector('#tab-sites h2').scrollIntoView({behavior:'smooth'});
+    document.querySelector('#tabsNav button[data-tab="sites"]').click();
+}
+function resetSiteForm(){
+    document.getElementById('siteForm').reset();
+    document.getElementById('siteIdInput').value = 0;
 }
 </script>
 </body>

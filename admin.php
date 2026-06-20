@@ -294,6 +294,103 @@ elseif ($action === 'toggle_ad_rule' && $db) {
     $id = (int)($_POST['rule_id'] ?? 0);
     if ($id > 0) { $db->toggleAdRule($id); $msg = '规则状态已切换'; }
 }
+// --- v4.1 资源站点 CRUD ---
+elseif ($action === 'save_site' && $db) {
+    $data = array(
+        'name'    => trim($_POST['site_name'] ?? ''),
+        'short_code' => trim($_POST['site_code'] ?? ''),
+        'base_url'    => trim($_POST['site_url'] ?? ''),
+        'match_pattern' => trim($_POST['site_pattern'] ?? ''),
+        'enabled' => isset($_POST['site_enabled']) ? 1 : 0,
+        'remark'  => trim($_POST['site_remark'] ?? ''),
+    );
+    $id = (int)($_POST['site_id'] ?? 0);
+    if ($data['name'] !== '') {
+        if ($id > 0) { $db->updateSite($id, $data); $msg = '站点 #' . $id . ' 已更新'; }
+        else { $newId = $db->addSite($data); $msg = '站点 #' . $newId . ' 已添加'; }
+    } else { $msg = '站点名称不能为空'; $msgType = 'error'; }
+}
+elseif ($action === 'delete_site' && $db) {
+    $id = (int)($_POST['site_id'] ?? 0);
+    if ($id > 0) { $db->deleteSite($id); $msg = '站点已删除'; }
+}
+elseif ($action === 'toggle_site' && $db) {
+    $id = (int)($_POST['site_id'] ?? 0);
+    if ($id > 0) { $db->toggleSite($id); $msg = '站点状态已切换'; }
+}
+// --- v4.1 解析日志清理 ---
+elseif ($action === 'clear_parse_log' && $db) {
+    $db->clearParseLog();
+    $msg = '解析日志已清空';
+}
+// --- v4.1 AJAX: M3U8 解析（返回 JSON 供前端渲染） ---
+elseif ($action === 'ajax_parse_m3u8') {
+    header('Content-Type: application/json; charset=utf-8');
+    $url = trim($_POST['m3u8_url'] ?? '');
+    $siteId = (int)($_POST['site_id'] ?? 0);
+    $siteName = '';
+    if ($siteId > 0 && $db) {
+        $s = $db->getSiteById($siteId);
+        if (!empty($s)) $siteName = $s['name'] . (!empty($s['short_code']) ? '(' . $s['short_code'] . ')' : '');
+    }
+    if ($url === '') {
+        echo json_encode(array('code' => 400, 'msg' => 'URL 不能为空'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    require_once __DIR__ . '/core/NoAdParser.php';
+    $parser = new NoAdParser();
+    $result = $parser->fetchAndAnalyze($url, 20);
+    if ($result === null) {
+        echo json_encode(array('code' => 500, 'msg' => '无法获取或解析该 M3U8 链接'), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    // 写入解析日志
+    if ($db) {
+        try {
+            $db->logM3u8Parse($siteId, $siteName, $url,
+                $result['total'], $result['ad_count'], $result['keep_count'],
+                $result['total_duration'], $result['ad_duration']);
+        } catch (Exception $e) { /* 静默 */ }
+    }
+    // 构造带时间戳的片段数据（简化版 segments 摘要，仅保留必要字段）
+    $liteSegs = array();
+    $totalRules = 0;
+    foreach ($result['segments'] as $seg) {
+        $liteSegs[] = array(
+            'idx'      => $seg['idx'],
+            'duration' => $seg['duration'],
+            'uri'      => $seg['uri'],
+            'is_ad'    => $seg['is_ad'],
+            'reason'   => $seg['reason'],
+            'time_start' => $parser->formatTime($seg['time_start']),
+            'time_end'   => $parser->formatTime($seg['time_end']),
+        );
+        if ($seg['is_ad']) $totalRules++;
+    }
+    echo json_encode(array(
+        'code'           => 200,
+        'msg'            => 'ok',
+        'total'          => $result['total'],
+        'ad_count'       => $result['ad_count'],
+        'keep_count'     => $result['keep_count'],
+        'total_duration' => $parser->formatTime($result['total_duration']),
+        'ad_duration'    => $parser->formatTime($result['ad_duration']),
+        'keep_duration'  => $parser->formatTime($result['keep_duration']),
+        'site_name'      => $siteName,
+        'rules'          => max(1, $totalRules),
+        'raw_content'    => $result['raw_content'],
+        'clean_m3u8'     => $result['clean_m3u8'],
+        'segments'       => $liteSegs,
+    ), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+// --- v4.1 AJAX: 获取资源站点下拉列表 ---
+elseif ($action === 'ajax_get_sites') {
+    header('Content-Type: application/json; charset=utf-8');
+    $sites = $db ? $db->getSites(true) : array();
+    echo json_encode(array('code' => 200, 'sites' => $sites), JSON_UNESCAPED_UNICODE);
+    exit;
+}
 elseif ($action === 'save_noad_config') {
     $newCfg = $noadConfig;
     $newCfg['noad_enabled'] = isset($_POST['noad_enabled']);
@@ -382,6 +479,9 @@ $topSources = $db ? $db->getTopSources(10) : array();
 $recentLogs = $db ? $db->getRecentLogs(30) : array();
 $noadSources = $db ? $db->getSources(0, false) : array();
 $adRules = $db ? $db->getAdRules(false) : array();
+$sites = $db ? $db->getSites(false) : array();
+$parseLogs = $db ? $db->getParseLog(50) : array();
+$resourceTypes = $noadConfig['resource_types'] ?? array();
 
 // 引入 UI 模板
 include __DIR__ . '/admin_tpl.php';
