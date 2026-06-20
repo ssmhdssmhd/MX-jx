@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>沫兮万能解析 - 视频在线解析</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 40px 20px;
+        color: #333;
+    }
+    .container {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    .header {
+        text-align: center;
+        color: #fff;
+        margin-bottom: 40px;
+    }
+    .header h1 { font-size: 32px; margin-bottom: 10px; }
+    .header p { font-size: 15px; opacity: 0.9; }
+    .card {
+        background: #fff;
+        border-radius: 16px;
+        padding: 30px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        margin-bottom: 20px;
+    }
+    .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+    input[type="text"] {
+        flex: 1;
+        padding: 14px 18px;
+        border: 2px solid #e0e0e0;
+        border-radius: 10px;
+        font-size: 15px;
+        outline: none;
+        transition: border-color 0.2s;
+    }
+    input[type="text"]:focus { border-color: #667eea; }
+    button {
+        padding: 14px 28px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        font-size: 15px;
+        cursor: pointer;
+        transition: transform 0.1s, box-shadow 0.2s;
+    }
+    button:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(102,126,234,0.4); }
+    button:active { transform: translateY(0); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .quick-links { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+    .quick-links button {
+        padding: 6px 14px;
+        background: #f0f0f0;
+        color: #555;
+        font-size: 13px;
+        border-radius: 20px;
+    }
+    .quick-links button:hover { background: #e0e0e0; box-shadow: none; }
+    .result { margin-top: 20px; }
+    .result-item {
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 10px;
+        margin-bottom: 10px;
+        word-break: break-all;
+    }
+    .result-item.success { background: #e8f5e9; border-left: 4px solid #4caf50; }
+    .result-item.error { background: #ffebee; border-left: 4px solid #f44336; }
+    .result-item.loading { background: #e3f2fd; border-left: 4px solid #2196f3; }
+    .result-label { font-size: 12px; color: #666; margin-bottom: 5px; }
+    .result-url { font-family: monospace; font-size: 13px; color: #333; }
+    .result-actions { margin-top: 10px; display: flex; gap: 8px; }
+    .result-actions button {
+        padding: 6px 14px;
+        background: #fff;
+        color: #667eea;
+        border: 1px solid #667eea;
+        font-size: 12px;
+        border-radius: 6px;
+    }
+    .result-actions button:hover { background: #667eea; color: #fff; }
+    .nav-links { margin-top: 30px; text-align: center; color: #fff; font-size: 14px; }
+    .nav-links a { color: #fff; margin: 0 10px; text-decoration: none; opacity: 0.85; }
+    .nav-links a:hover { opacity: 1; text-decoration: underline; }
+    .footer { text-align: center; color: rgba(255,255,255,0.7); font-size: 12px; margin-top: 40px; }
+    pre { background: #2d2d2d; color: #ccc; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>🎬 沫兮万能解析</h1>
+        <p>多线路视频在线解析 · 智能选优 · M3U8 直链</p>
+    </div>
+
+    <div class="card">
+        <div class="input-group">
+            <input type="text" id="videoUrl" placeholder="粘贴视频链接（腾讯视频、爱奇艺、抖音...）或 M3U8 直链">
+            <button id="parseBtn" onclick="parseVideo()">🔍 解析</button>
+        </div>
+        <div class="quick-links">
+            <span style="color:#888;font-size:13px;line-height:28px;">快速填写：</span>
+            <button onclick="fillDemo('https://v.qq.com/x/cover/mzc00200mp8vo9l/r00421m6n7k.html')">腾讯视频示例</button>
+            <button onclick="fillDemo('https://www.iqiyi.com/v_example.html')">爱奇艺示例</button>
+            <button onclick="fillDemo('https://v.douyin.com/demo/')">抖音示例</button>
+            <button onclick="fillDemo('')">清空</button>
+        </div>
+        <div id="result" class="result"></div>
+    </div>
+
+    <div class="nav-links">
+        <a href="player.html">▶️ 播放器</a>
+        <a href="api-test.html">🧪 API 调试</a>
+        <a href="m3u8-test.html">📺 M3U8 测试</a>
+    </div>
+
+    <div class="footer">
+        © MX 射手沫蝴蝶 · 仅供学习交流使用
+    </div>
+</div>
+
+<script>
+const API_URL = '../index.php';
+
+function fillDemo(url) {
+    document.getElementById('videoUrl').value = url;
+}
+
+function parseVideo() {
+    const url = document.getElementById('videoUrl').value.trim();
+    const resultEl = document.getElementById('result');
+    const btn = document.getElementById('parseBtn');
+
+    if (!url) {
+        resultEl.innerHTML = '<div class="result-item error"><div class="result-label">⚠️ 错误</div><div class="result-url">请输入视频链接</div></div>';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '⏳ 解析中...';
+    resultEl.innerHTML = '<div class="result-item loading"><div class="result-label">🔄 请求中</div><div class="result-url">正在通过多线路解析，请稍候...</div></div>';
+
+    const startTime = Date.now();
+
+    fetch(`${API_URL}?url=${encodeURIComponent(url)}`)
+        .then(r => r.text())
+        .then(text => {
+            let data;
+            try { data = JSON.parse(text); } catch(e) { data = { msg: text, code: 200 }; }
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+
+            if (data && (data.code === 200 || data.msg)) {
+                const playUrl = data.url || data.msg;
+                const isM3u8 = playUrl.includes('.m3u8') || playUrl.includes('m3u8');
+                resultEl.innerHTML = `
+                    <div class="result-item success">
+                        <div class="result-label">✅ 解析成功 · 耗时 ${elapsed}s ${data.strategy ? '· 策略: ' + data.strategy : ''}</div>
+                        <div class="result-url">${playUrl}</div>
+                        <div class="result-actions">
+                            ${isM3u8 ? `<button onclick="playInPlayer('${playUrl}')">▶️ 播放</button>` : ''}
+                            <button onclick="copyText('${playUrl}')">📋 复制</button>
+                            <button onclick="window.open('${playUrl}', '_blank')">🔗 新窗口打开</button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                resultEl.innerHTML = `<div class="result-item error"><div class="result-label">❌ 解析失败 · 耗时 ${elapsed}s</div><pre>${text.slice(0, 500)}</pre></div>`;
+            }
+        })
+        .catch(err => {
+            resultEl.innerHTML = `<div class="result-item error"><div class="result-label">❌ 请求失败</div><div class="result-url">${err.message}</div></div>`;
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.textContent = '🔍 解析';
+        });
+}
+
+function playInPlayer(url) {
+    window.location.href = `player.html?src=${encodeURIComponent(url)}`;
+}
+
+function copyText(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = event.target;
+        const orig = btn.textContent;
+        btn.textContent = '✅ 已复制';
+        setTimeout(() => btn.textContent = orig, 1500);
+    });
+}
+
+document.getElementById('videoUrl').addEventListener('keypress', e => {
+    if (e.key === 'Enter') parseVideo();
+});
+</script>
+</body>
+</html>

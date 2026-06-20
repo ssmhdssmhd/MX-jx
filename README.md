@@ -111,18 +111,36 @@ MX-jx/
 │   ├── requester.php          # 🌐 Requester - 并发请求引擎
 │   └── cache.php              # 💾 SmartCache - 文件缓存
 │
-└── handlers/                  # 📂 处理器层
-    └── M3U8Handler.php        # 🎬 M3U8 直链检测与响应
+├── handlers/                  # 📂 处理器层
+│   └── M3U8Handler.php        # 🎬 M3U8 直链检测与响应
+│
+├── html/                      # 📂 前端页面（v4.1.0 新增）
+│   ├── index.html             # 🏠 首页 / 演示页（输入视频链接进行解析）
+│   ├── player.html            # ▶️ M3U8 播放器（HLS.js 播放解析后的视频）
+│   ├── api-test.html          # 🧪 API 调试页（查看原始响应 / JSON 字段）
+│   └── m3u8-test.html         # 📺 M3U8 测试页（内置公开测试流）
+│
+├── docs/                      # 📂 文档目录（v4.1.0 新增）
+│   ├── 配置说明.md            # 配置文件详细说明
+│   ├── 核心说明.md            # 核心模块设计说明
+│   └── M3U8处理器规则.md      # M3U8 处理器规则说明
+│
+├── cache/                     # 📂 缓存目录（运行时自动生成）
+│   └── .gitkeep               # 空目录占位
+│
+└── backup/                    # 📂 历史备份（归档压缩包）
+    └── *.zip                  # 各版本代码备份
 ```
 
-### 📊 项目文件统计（v3.1.0）
+### 📊 项目文件统计（v4.1.0）
 
 | 类型 | 数量 | 说明 |
 |------|------|------|
 | **PHP 文件** | 10 个 | 入口 2 个 + 配置 4 个 + 核心 3 个 + 处理器 1 个 |
+| **HTML 页面** | 4 个 | 首页 / 播放器 / API调试 / M3U8测试 |
 | **CSS 文件** | 1 个 | 后台管理页面样式 |
-| **文本文档** | 3 个 | README、INSTALL 安装指南、ZJK.txt 自定义接口 |
-| **总文件数** | 14 个 | |
+| **文本文档** | 6 个 | README、INSTALL、ZJK.txt、docs/ 3 个说明 |
+| **总文件数** | ~21 个 | |
 
 ### 核心类/文件说明
 
@@ -150,6 +168,15 @@ MX-jx/
 | `NoAdParser` | [core/NoAdParser.php](core/NoAdParser.php) | M3U8 广告片段识别过滤 / 多源并发匹配 / 缓存加速 |
 | `Database` | [core/Database.php](core/Database.php) | SQLite 轻量持久层：解析源 / 广告规则 / 访问统计 / 日志 |
 | `NoAd 配置` | [config/noad.php](config/noad.php) | 去广告系统参数：阈值 / 超时 / 资源类型 / 默认规则 |
+
+### 前端页面（v4.1.0 新增）
+
+| 文件 | 类型 | 作用 |
+|------|------|------|
+| `index.html` | [html/index.html](html/index.html) | 🏠 首页 / 演示页：输入视频链接，调用解析接口，一键播放 |
+| `player.html` | [html/player.html](html/player.html) | ▶️ M3U8 播放器：基于 HLS.js，支持点播与直播 |
+| `api-test.html` | [html/api-test.html](html/api-test.html) | 🧪 API 调试页：GET/POST 请求，JSON 响应可视化 |
+| `m3u8-test.html` | [html/m3u8-test.html](html/m3u8-test.html) | 📺 M3U8 测试页：内置 Apple 公开测试流，快速验证播放 |
 
 ---
 

@@ -1,13 +1,47 @@
-project/
-├── config/
-│   ├── api.php          # API线路配置
-│   ├── platform.php     # 平台规则配置
-│   └── switch.php       # 系统开关配置
-├── core/
-│   ├── strategy.php     # 智能选择策略
-│   └── requester.php    # 请求处理核心
-├── handlers/            # 新增：处理器文件夹
-│   └── M3U8Handler.php  # M3U8链接验证处理
-├── index.php           # 主入口文件
-├── disclaimer.php      # 免责声明
-└── ZJK.txt            # 自定义接口配置
+MX-jx/
+├── index.php              # 🎯 主入口文件（解析接口）
+├── admin.php              # 🔐 后台管理入口（密码登录）
+├── admin_main.php         # 📊 后台页面模板（12 个功能 Tab）
+├── admin_style.css        # 🎨 后台页面样式
+├── noad_proxy.php         # 🔄 NoAd 代理入口（M3U8 清洗 / TS 跨域）
+├── test_playlist.m3u8     # 📼 测试用 M3U8 播放列表
+├── README.md              # 📖 项目说明文档
+├── INSTALL.md             # 🚀 新手安装指南
+├── disclaimer.php         # 📝 免责声明类
+├── ZJK.txt               # ⚙️ 自定义接口配置
+├── 项目结构.txt          # 📄 本项目结构说明
+│
+├── config/                # 📂 配置层
+│   ├── api.php           # API 线路配置（13主 + 2备）
+│   ├── platform.php      # 平台规则配置（17个视频平台）
+│   ├── switch.php        # 系统开关配置
+│   ├── admin.php         # 后台配置（密码/端口/权限）
+│   └── noad.php          # NoAd 去广告系统参数
+│
+├── core/                  # 📂 核心层
+│   ├── strategy.php      # 🧠 Strategy - 智能选择策略
+│   ├── requester.php     # 🌐 Requester - 并发请求引擎
+│   ├── cache.php         # 💾 SmartCache - 文件缓存
+│   ├── Database.php      # 🗄️ SQLite 持久层
+│   ├── NoAdParser.php    # ✂️ M3U8 广告识别与过滤
+│   └── 1.md              # 核心模块设计说明
+│
+├── handlers/              # 📂 处理器层
+│   └── M3U8Handler.php   # 🎬 M3U8 直链检测与响应
+│
+├── html/                  # 📂 前端页面（v4.1.0 新增）
+│   ├── index.html        # 🏠 首页 / 演示页（输入视频链接进行解析）
+│   ├── player.html       # ▶️ M3U8 播放器（HLS.js 播放解析后的视频）
+│   ├── api-test.html     # 🧪 API 调试页（查看原始响应 / JSON 字段）
+│   └── m3u8-test.html    # 📺 M3U8 测试页（内置多条公开测试流）
+│
+├── docs/                  # 📂 文档目录
+│   ├── 配置说明.md       # 配置文件详细说明
+│   ├── 核心说明.md       # 核心模块设计说明
+│   └── M3U8处理器规则.md # M3U8 处理器规则说明
+│
+├── cache/                 # 📂 缓存目录（运行时自动生成）
+│   └── .gitkeep          # 空目录占位
+│
+└── backup/                # 📂 历史备份（归档压缩包）
+    └── *.zip             # 各版本代码备份

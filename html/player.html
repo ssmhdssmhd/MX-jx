@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视频播放器 - 沫兮万能解析</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #0a0a0a;
+        color: #eee;
+        min-height: 100vh;
+        padding: 20px;
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .header h1 { font-size: 24px; color: #fff; }
+    .header p { font-size: 13px; color: #888; margin-top: 5px; }
+    .player-card {
+        background: #1a1a1a;
+        border-radius: 14px;
+        padding: 20px;
+        margin-bottom: 15px;
+    }
+    video {
+        width: 100%;
+        max-height: 600px;
+        background: #000;
+        border-radius: 10px;
+        display: block;
+    }
+    .url-bar {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        flex-wrap: wrap;
+    }
+    input[type="text"] {
+        flex: 1;
+        min-width: 300px;
+        padding: 12px 16px;
+        background: #2a2a2a;
+        border: 1px solid #3a3a3a;
+        color: #eee;
+        border-radius: 8px;
+        font-size: 14px;
+        outline: none;
+        font-family: monospace;
+    }
+    input[type="text"]:focus { border-color: #667eea; }
+    button {
+        padding: 12px 22px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+    button:hover { opacity: 0.9; }
+    button.secondary {
+        background: #2a2a2a;
+        border: 1px solid #444;
+    }
+    button.secondary:hover { background: #333; }
+    .status-bar {
+        margin-top: 15px;
+        padding: 12px;
+        background: #2a2a2a;
+        border-radius: 8px;
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .status-item { color: #888; }
+    .status-item strong { color: #eee; font-weight: normal; margin-left: 6px; }
+    .status-item.success strong { color: #4caf50; }
+    .status-item.error strong { color: #f44336; }
+    .info-card {
+        background: #1a1a1a;
+        border-radius: 14px;
+        padding: 20px;
+        font-size: 13px;
+        color: #888;
+    }
+    .info-card h3 { color: #eee; font-size: 15px; margin-bottom: 12px; }
+    .info-card ul { list-style: none; }
+    .info-card li { padding: 6px 0; line-height: 1.6; }
+    .info-card code {
+        background: #2a2a2a;
+        padding: 2px 8px;
+        border-radius: 4px;
+        color: #667eea;
+        font-size: 12px;
+    }
+    .nav-links { margin-top: 20px; text-align: center; font-size: 13px; }
+    .nav-links a { color: #888; margin: 0 10px; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>📺 M3U8 视频播放器</h1>
+        <p>支持 HLS 流媒体直播与点播播放</p>
+    </div>
+
+    <div class="player-card">
+        <video id="video" controls autoplay playsinline>
+            您的浏览器不支持 video 标签
+        </video>
+        <div class="url-bar">
+            <input type="text" id="m3u8Url" placeholder="输入 .m3u8 视频链接...">
+            <button onclick="loadVideo()">▶️ 播放</button>
+            <button class="secondary" onclick="goBack()">← 返回</button>
+        </div>
+        <div class="status-bar">
+            <span class="status-item">状态：<strong id="statusText">等待加载...</strong></span>
+            <span class="status-item">格式：<strong id="formatText">--</strong></span>
+            <span class="status-item">分辨率：<strong id="resText">--</strong></span>
+            <span class="status-item">时长：<strong id="durText">--</strong></span>
+        </div>
+    </div>
+
+    <div class="info-card">
+        <h3>💡 使用说明</h3>
+        <ul>
+            <li>• 直接在上方输入 <code>.m3u8</code> 链接，或通过首页解析后点击「播放」跳转到此页</li>
+            <li>• 支持 URL 参数自动加载：<code>player.html?src=你的m3u8链接</code></li>
+            <li>• 使用 HLS.js 库（CDN 加载），兼容所有现代浏览器</li>
+            <li>• 支持直播流和点播流，自适应码率切换</li>
+        </ul>
+    </div>
+
+    <div class="nav-links">
+        <a href="index.html">🏠 首页</a>
+        <a href="api-test.html">🧪 API 调试</a>
+        <a href="m3u8-test.html">📺 M3U8 测试</a>
+    </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const urlInput = document.getElementById('m3u8Url');
+const statusText = document.getElementById('statusText');
+const formatText = document.getElementById('formatText');
+const resText = document.getElementById('resText');
+const durText = document.getElementById('durText');
+let hls = null;
+
+function setStatus(text, type) {
+    statusText.textContent = text;
+    statusText.parentElement.className = 'status-item ' + (type || '');
+}
+
+function loadVideo(src) {
+    const url = src || urlInput.value.trim();
+    if (!url) { setStatus('请输入链接', 'error'); return; }
+    urlInput.value = url;
+    setStatus('加载中...', '');
+    formatText.textContent = '检测中';
+    resText.textContent = '--';
+    durText.textContent = '--';
+
+    // Clean previous instance
+    if (hls) { hls.destroy(); hls = null; }
+
+    // Native HLS support (Safari / iOS)
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        formatText.textContent = '原生 HLS';
+        video.play().catch(() => {});
+    } else if (window.Hls && Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            setStatus('就绪', 'success');
+            formatText.textContent = 'HLS.js';
+            video.play().catch(() => {});
+        });
+        hls.on(Hls.Events.ERROR, (e, data) => {
+            if (data.fatal) {
+                setStatus('播放错误: ' + data.type, 'error');
+                formatText.textContent = data.details;
+            }
+        });
+    } else {
+        video.src = url;
+        formatText.textContent = '原生尝试';
+    }
+}
+
+video.addEventListener('loadedmetadata', () => {
+    resText.textContent = video.videoWidth + ' × ' + video.videoHeight;
+    if (isFinite(video.duration)) {
+        const m = Math.floor(video.duration / 60);
+        const s = Math.floor(video.duration % 60);
+        durText.textContent = m + '分' + s + '秒';
+    } else {
+        durText.textContent = '直播流';
+    }
+});
+
+video.addEventListener('playing', () => setStatus('▶️ 播放中', 'success'));
+video.addEventListener('pause', () => setStatus('⏸️ 已暂停', ''));
+video.addEventListener('error', () => setStatus('❌ 视频加载失败', 'error'));
+
+function goBack() {
+    if (document.referrer) history.back();
+    else window.location.href = 'index.html';
+}
+
+// Auto load from URL parameter
+const params = new URLSearchParams(location.search);
+const autoSrc = params.get('src') || params.get('url');
+if (autoSrc) loadVideo(autoSrc);
+
+urlInput.addEventListener('keypress', e => { if (e.key === 'Enter') loadVideo(); });
+</script>
+</body>
+</html>
