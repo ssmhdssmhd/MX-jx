@@ -151,6 +151,27 @@ return array(
     "enable_custom_algorithms" => true,        // 启用 /algorithms 目录下的自定义算法扩展
     "custom_algorithms_scope" => "all",        // 默认作用域: all / url / m3u8
 
+    // ========== 如意解析源专属去广告算法（如意 v2.0+ 配置）==========
+    // 说明: 针对如意（ryiplay/如意资源站的 M3U8 去广告参数
+    //       该算法会自动分析 M3U8 片段的广告片段进行清理。
+    //       默认参数: 针对资源站通用，但可调节 50~60s 为视频测试
+    "ruyi_enabled" => true,                    // 启用如意专属算法开关（默认
+    "ruyi_score_threshold" => 4,                  // Score 阈值 = 0 表示不限制，数值越大越严格越保守）
+    "ruyi_baseline_sec" => 4.00,                  // 资源站标准片段时长（秒）：通常是视频编码标准单元，用于判断哪些片段时长偏离正常值属于异常并由并非常规片段
+    "ruyi_baseline_tolerance" => 0.10,             // 基准时长容差（秒）：±0.10s 内都算正常片段
+    "ruyi_min_cluster_len" => 3,                     // 广告簇最小长度：连续多少个非基准时长片段为广告
+    "ruyi_max_cluster_len" => 15,                    // 广告簇最大长度（超过视为正片内容
+    "ruyi_min_cluster_sum" => 15.0,                  // 广告簇最小总时长（秒）：广告块总时长阈值
+    "ruyi_max_cluster_sum" => 35.0,                  // 广告簇最大总时长（秒）：广告块总时长上限
+    "ruyi_short_seg_threshold" => 3.0,                  // 短片段阈值（秒）：时长 < 此值的独立片段标记为广告候选
+    "ruyi_very_short_threshold" => 1.5,               // 极短片段阈值（秒）： < 此值直接判定为广告过渡/推广
+    "ruyi_enable_discontinuity" => true,              // 启用 DISCONTINUITY 标记辅助判断
+    "ruyi_auto_optimize_enabled" => true,            // 每天自动检测和自动优化算法参数
+    "ruyi_auto_optimize_hour" => 3,              // 自动检测的时间：3点进行检测 服务器空闲时间执行，单位：小时（0~23)
+    "ruyi_auto_optimize_interval_hours" => 24,        // 自动检测的间隔（小时），24=每天一次
+    "ruyi_auto_optimize_sample_url" => "",           // 自动检测用的示例视频 URL（用于自动检测优化算法去广告效率（为空会自动选择随机选择个视频测试
+    "ruyi_debug_mode" => false,                         // 调试模式：返回详细的识别信息（调试专用
+
     // ========== HTTP 代理 & 反封禁（v4.3 新增）==========
     // 说明: 支持多代理轮换，可避免短时间内对同一源请求过多而被封 IP
     // 格式: "http://ip:port" 或 "http://user:pass@ip:port"

@@ -129,7 +129,8 @@ function buildNoadConfig($c) {
     $wl = var_export($c['whitelist_keywords'] ?? ['main','正片','hd'], true);
     $rt = var_export($c['resource_types'] ?? defaultTypes(), true);
     $ds = var_export($c['default_sources'] ?? [], true);
-    return "<?php\n/** NoAd 去广告系统 v4 配置 */\n\nreturn array(\n" .
+    $rs = var_export($c['resource_sites'] ?? [], true);
+    return "<?php\n/** NoAd 去广告系统 v4 配置文件 */\n\nreturn array(\n" .
             "    'noad_enabled' => " . ($c['noad_enabled'] ? 'true' : 'false') . ",\n" .
             "    'debug_mode' => " . ($c['debug_mode'] ? 'true' : 'false') . ",\n" .
             "    'enable_ad_filter' => " . ($c['enable_ad_filter'] ? 'true' : 'false') . ",\n" .
@@ -145,10 +146,45 @@ function buildNoadConfig($c) {
             "    'whitelist_keywords' => " . $wl . ",\n" .
             "    'resource_types' => " . $rt . ",\n" .
             "    'default_sources' => " . $ds . ",\n" .
+            "    'resource_sites' => " . $rs . ",\n" .
             "    'stats_enabled' => " . ($c['stats_enabled'] ? 'true' : 'false') . ",\n" .
             "    'stats_log_request' => true,\n" .
             "    'stats_top_limit' => 20,\n" .
             "    'sqlite_path' => __DIR__ . '/../cache/noad.db',\n" .
+            "    // ========= 如意去广告算法（Ruyi Pattern Cleaner v2.1） =========\n" .
+            "    // 算法开关：true=启用 false=关闭（关闭后完全跳过如意算法，仅使用其他广告过滤）\n" .
+            "    'ruyi_enabled' => " . (isset($c['ruyi_enabled']) && !$c['ruyi_enabled'] ? 'false' : 'true') . ",\n" .
+            "    // Score 阈值：分数 >=此值的片段簇被视为广告。推荐值：3=保守, 4=平衡(默认), 5=激进\n" .
+            "    'ruyi_score_threshold' => " . (int)($c['ruyi_score_threshold'] ?? 4) . ",\n" .
+            "    // 基准片段时长（秒）：资源站标准视频片段时长。其他时长被视为候选广告片段\n" .
+            "    'ruyi_baseline_sec' => " . round((float)($c['ruyi_baseline_sec'] ?? 4.00), 2) . ",\n" .
+            "    // 基准容差（秒）：基准 ±此值范围内都视为正常视频片段。默认 0.10\n" .
+            "    'ruyi_baseline_tolerance' => " . round((float)($c['ruyi_baseline_tolerance'] ?? 0.10), 2) . ",\n" .
+            "    // 广告簇最小长度：连续非基准时长片段数量 >=此值才视为候选广告（太短=可能是正常场景切换）\n" .
+            "    'ruyi_min_cluster_len' => " . (int)($c['ruyi_min_cluster_len'] ?? 3) . ",\n" .
+            "    // 广告簇最大长度：超过此长度视为正常内容（如纪录片的复杂片段），默认 15\n" .
+            "    'ruyi_max_cluster_len' => " . (int)($c['ruyi_max_cluster_len'] ?? 15) . ",\n" .
+            "    // 广告簇最小总时长（秒）：片段组总时长 >=此值才是完整广告块，默认 15\n" .
+            "    'ruyi_min_cluster_sum' => " . round((float)($c['ruyi_min_cluster_sum'] ?? 15.0), 2) . ",\n" .
+            "    // 广告簇最大总时长（秒）：超过此值的长片段组=正片内容，默认 35\n" .
+            "    'ruyi_max_cluster_sum' => " . round((float)($c['ruyi_max_cluster_sum'] ?? 35.0), 2) . ",\n" .
+            "    // 短片段阈值（秒）：片段时长 <此值视为广告强信号，默认 3.0\n" .
+            "    'ruyi_short_seg_threshold' => " . round((float)($c['ruyi_short_seg_threshold'] ?? 3.0), 2) . ",\n" .
+            "    // 极短片段阈值（秒）：片段时长 <此值 =直接删除（广告过渡/收尾标志），默认 1.5\n" .
+            "    'ruyi_very_short_threshold' => " . round((float)($c['ruyi_very_short_threshold'] ?? 1.5), 2) . ",\n" .
+            "    // DISCONTINUITY 信号：启用 M3U8 中编码断层标记（典型为广告插入点）辅助判断\n" .
+            "    'ruyi_enable_discontinuity' => " . (isset($c['ruyi_enable_discontinuity']) && !$c['ruyi_enable_discontinuity'] ? 'false' : 'true') . ",\n" .
+            "    // 每天自动检测优化：每天指定时间，系统自动用示例视频测试并调整参数\n" .
+            "    'ruyi_auto_optimize_enabled' => " . (isset($c['ruyi_auto_optimize_enabled']) && !$c['ruyi_auto_optimize_enabled'] ? 'false' : 'true') . ",\n" .
+            "    // 自动检测执行时间（0~23 小时），推荐凌晨 3 点，默认 3\n" .
+            "    'ruyi_auto_optimize_hour' => " . (int)($c['ruyi_auto_optimize_hour'] ?? 3) . ",\n" .
+            "    // 自动检测间隔（小时），24=每天一次，12=12小时一次，默认 24\n" .
+            "    'ruyi_auto_optimize_interval_hours' => " . (int)($c['ruyi_auto_optimize_interval_hours'] ?? 24) . ",\n" .
+            "    // 自动检测示例视频 URL（为空时随机选择解析源），可填写经常观看的视频地址\n" .
+            "    'ruyi_auto_optimize_sample_url' => " . (isset($c['ruyi_auto_optimize_sample_url']) && !empty($c['ruyi_auto_optimize_sample_url'])
+                ? "'" . addslashes(trim($c['ruyi_auto_optimize_sample_url'])) . "'" : "''") . ",\n" .
+            "    // 调试模式：true =在 M3U8 中加入调试标记（开发专用），默认 false\n" .
+            "    'ruyi_debug_mode' => " . (!empty($c['ruyi_debug_mode']) ? 'true' : 'false') . ",\n" .
             ");\n";
 }
 function defaultTypes() {
@@ -181,6 +217,7 @@ $ajaxEarlyWhitelist = [
     'ajax_parse_m3u8', 'ajax_get_sites',
     'ajax_list_algorithms', 'ajax_toggle_algo',
     'ajax_reload_algorithms', 'ajax_test_algorithms',
+    'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
 ];
 if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
     header('Content-Type: application/json; charset=utf-8');
@@ -252,6 +289,175 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             'applied' => $result['applied'] ?? [],
             'changed' => ($result['data'] ?? $input) !== $input,
         ], JSON_UNESCAPED_UNICODE);
+    } elseif ($ajaxEarlyAction === 'ajax_ruyi_test' || $ajaxEarlyAction === 'ajax_ruyi_auto_optimize') {
+        // === 如意算法：测试 / 自动优化 ===
+        // 步骤 1：选择示例 M3U8 URL
+        $sampleUrl = trim($_POST['sample_url'] ?? '');
+        $testUrls = [
+            'https://svip.ryiplay18.com/20260621/7402_adcfbfd7/index.m3u8', // 如意原始样本
+        ];
+        if ($sampleUrl !== '') $testUrls = [$sampleUrl];
+
+        // 步骤 2：下载一个 M3U8（跟随 master playlist 子 m3u8）
+        $downloadOk = false;
+        $m3u8 = '';
+        $testedUrl = '';
+        foreach ($testUrls as $testUrl) {
+            $testedUrl = $testUrl;
+            $ch = curl_init($testUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36');
+            $content = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            if ($content && $code === 200 && trim($content) !== '') {
+                $m3u8 = $content;
+                // 若为 master playlist，跟随第一个子 m3u8
+                if (strpos($m3u8, '#EXT-X-STREAM-INF') !== false) {
+                    $lines = preg_split('/\r\n|\r|\n/', $m3u8);
+                    for ($i = 0; $i < count($lines); $i++) {
+                        if (strpos($lines[$i], '#EXT-X-STREAM-INF') === 0) {
+                            for ($j = $i + 1; $j < count($lines); $j++) {
+                                $next = trim($lines[$j]);
+                                if ($next !== '' && strpos($next, '#') !== 0 && strpos($next, 'http') === 0) {
+                                    $ch2 = curl_init($next);
+                                    curl_setopt_array($ch2, [CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_FOLLOWLOCATION => true, CURLOPT_TIMEOUT => 30, CURLOPT_USERAGENT => 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36']);
+                                    $content2 = curl_exec($ch2);
+                                    curl_close($ch2);
+                                    if ($content2 && trim($content2) !== '') { $m3u8 = $content2; }
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
+                }
+                $downloadOk = true;
+                break;
+            }
+        }
+
+        // 步骤 3：根据 action 决定输出（测试 vs 自动优化）
+        if (!$downloadOk) {
+            echo json_encode([
+                'code' => 500,
+                'msg' => '无法下载示例 M3U8（网络问题或 URL 已失效）。可在配置中填写有效的视频 URL。',
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // 统计原始信息
+        $origLines = preg_split('/\r\n|\r|\n/', $m3u8);
+        $origSeg = 0; $origShort = 0; $origVeryShort = 0;
+        foreach ($origLines as $line) {
+            if (preg_match('/#EXTINF:([\d\.]+)/', $line, $m)) {
+                $origSeg++;
+                if ($m[1] < 3.0) $origShort++;
+                if ($m[1] < 1.5) $origVeryShort++;
+            }
+        }
+
+        // 加载如意算法并应用（自动使用 config/noad.php 中的参数）
+        require_once __DIR__ . '/algorithms/AbstractAlgorithm.php';
+        require_once __DIR__ . '/algorithms/AlgorithmRegistry.php';
+        require_once __DIR__ . '/algorithms/ruyi_pattern_cleaner.php';
+
+        if ($ajaxEarlyAction === 'ajax_ruyi_test') {
+            // === 测试当前参数：输出当前参数的效果 ===
+            $algo = new RuyiPatternCleaner();
+            $cleaned = $algo->apply($m3u8, ['original_url' => $testedUrl]);
+            $cleanedSeg = 0; $cleanedShort = 0; $cleanedVeryShort = 0;
+            foreach (preg_split('/\r\n|\r|\n/', $cleaned) as $line) {
+                if (preg_match('/#EXTINF:([\d\.]+)/', $line, $m)) {
+                    $cleanedSeg++;
+                    if ($m[1] < 3.0) $cleanedShort++;
+                    if ($m[1] < 1.5) $cleanedVeryShort++;
+                }
+            }
+            $params = method_exists($algo, 'getCurrentParams') ? $algo->getCurrentParams() : [];
+            $report = "✅ 如意算法测试完成\n\n"
+                    . "测试视频：$testedUrl\n"
+                    . "总片段数：$origSeg → $cleanedSeg（删除 " . ($origSeg - $cleanedSeg) . " 段）\n"
+                    . "极短片段（<1.5s）：$origVeryShort → $cleanedVeryShort（删除 " . ($origVeryShort - $cleanedVeryShort) . " 段）\n"
+                    . "短片段（<3.0s）：$origShort → $cleanedShort（删除 " . ($origShort - $cleanedShort) . " 段）\n\n"
+                    . "当前参数：\n";
+            foreach ($params as $k => $v) $report .= "  · $k = $v\n";
+            echo json_encode(['code' => 200, 'report' => $report, 'saved' => false], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // === 自动优化：多组参数扫描 → 选出最优 → 保存配置 ===
+        // 候选参数：Score 阈值 3/4/5，簇长度稍作调整
+        $candidates = [
+            ['score' => 3, 'minLen' => 3, 'maxLen' => 12, 'minSum' => 15, 'veryShort' => 1.5],
+            ['score' => 4, 'minLen' => 3, 'maxLen' => 15, 'minSum' => 15, 'veryShort' => 1.5],  // 默认
+            ['score' => 5, 'minLen' => 3, 'maxLen' => 18, 'minSum' => 18, 'veryShort' => 1.5],
+            ['score' => 4, 'minLen' => 5, 'maxLen' => 15, 'minSum' => 20, 'veryShort' => 1.2],  // 更保守
+            ['score' => 3, 'minLen' => 2, 'maxLen' => 12, 'minSum' => 12, 'veryShort' => 1.8],  // 更灵敏
+        ];
+
+        // 动态构造算法实例并评估每个参数组合
+        $bestScore = -1; $bestIdx = 0; $bestReport = '';
+        $allReports = [];
+        foreach ($candidates as $idx => $c) {
+            // 临时修改配置以测试不同参数
+            $algo = new RuyiPatternCleaner();
+            // 使用反射修改私有属性（或使用构造参数）
+            $ref = new ReflectionClass($algo);
+            $props = ['scoreThreshold' => $c['score'], 'minClusterLength' => $c['minLen'],
+                     'maxClusterLength' => $c['maxLen'], 'minClusterSum' => $c['minSum'],
+                     'veryShortThreshold' => $c['veryShort']];
+            foreach ($props as $name => $val) {
+                if ($ref->hasProperty($name)) {
+                    $prop = $ref->getProperty($name);
+                    $prop->setAccessible(true);
+                    $prop->setValue($algo, $val);
+                }
+            }
+            $cleaned = $algo->apply($m3u8, ['original_url' => $testedUrl]);
+
+            // 统计：删除的短片段数（广告） vs 片段删除比例
+            $cleanedSeg = 0; $cleanedVeryShort = 0;
+            foreach (preg_split('/\r\n|\r|\n/', $cleaned) as $line) {
+                if (preg_match('/#EXTINF:([\d\.]+)/', $line, $m)) {
+                    $cleanedSeg++;
+                    if ($m[1] < 1.5) $cleanedVeryShort++;
+                }
+            }
+            $removed = $origSeg - $cleanedSeg;
+            $removedRatio = $origSeg > 0 ? round($removed * 100 / $origSeg, 1) : 0;
+            $removedVeryShort = $origVeryShort - $cleanedVeryShort;
+            // 评分：高极短删除率 + 低总删除率（避免误删正片）
+            $veryShortRate = $origVeryShort > 0 ? round($removedVeryShort * 100 / max(1, $origVeryShort), 1) : 100;
+            $goodScore = $veryShortRate * 2 - $removedRatio;  // 极短删除高 + 总删除低 = 好
+            $allReports[] = "候选 $idx: Score阈值={$c['score']}, 簇 {$c['minLen']}-{$c['maxLen']}/sum>{$c['minSum']}s → 总删除 $removed段($removedRatio%), 极短删除 $removedVeryShort段, 评分=$goodScore";
+            if ($goodScore > $bestScore) { $bestScore = $goodScore; $bestIdx = $idx; }
+        }
+
+        // 选出最优参数组合并自动保存
+        $best = $candidates[$bestIdx];
+        $noadConfigPath = __DIR__ . '/config/noad.php';
+        $currentCfg = @include $noadConfigPath;
+        if (!is_array($currentCfg)) $currentCfg = [];
+        $currentCfg['ruyi_score_threshold'] = $best['score'];
+        $currentCfg['ruyi_min_cluster_len'] = $best['minLen'];
+        $currentCfg['ruyi_max_cluster_len'] = $best['maxLen'];
+        $currentCfg['ruyi_min_cluster_sum'] = $best['minSum'];
+        $currentCfg['ruyi_very_short_threshold'] = $best['veryShort'];
+        // 写入配置文件
+        writePhpFile($noadConfigPath, buildNoadConfig($currentCfg));
+
+        $report = "🤖 如意算法自动优化完成\n\n"
+                . "测试视频：$testedUrl\n"
+                . "原始片段：$origSeg 段, 极短(<1.5s): $origVeryShort 段\n\n"
+                . "所有候选参数测试：\n" . implode("\n", $allReports) . "\n\n"
+                . "🏆 最优组合：候选 $bestIdx (Score阈值={$best['score']}, 簇 {$best['minLen']}-{$best['maxLen']}/sum>{$best['minSum']}s)\n"
+                . "✅ 已自动保存到 config/noad.php，下次解析视频将使用新参数！";
+        echo json_encode(['code' => 200, 'report' => $report, 'saved' => true], JSON_UNESCAPED_UNICODE);
+        exit;
     }
     exit;
 }
@@ -482,9 +688,26 @@ elseif ($action === 'save_noad_config') {
     $newCfg['request_timeout'] = max(1, (int)($_POST['request_timeout'] ?? 10));
     $newCfg['ad_keyword_threshold'] = max(1, (int)($_POST['ad_keyword_threshold'] ?? 2));
     $newCfg['debug_mode'] = isset($_POST['debug_mode']);
+    // ===== 如意算法参数保存 =====
+    $newCfg['ruyi_enabled'] = isset($_POST['ruyi_enabled']);
+    $newCfg['ruyi_score_threshold'] = max(1, (int)($_POST['ruyi_score_threshold'] ?? 4));
+    $newCfg['ruyi_baseline_sec'] = max(0.5, round((float)($_POST['ruyi_baseline_sec'] ?? 4.00), 2));
+    $newCfg['ruyi_baseline_tolerance'] = max(0.01, round((float)($_POST['ruyi_baseline_tolerance'] ?? 0.10), 2));
+    $newCfg['ruyi_min_cluster_len'] = max(1, (int)($_POST['ruyi_min_cluster_len'] ?? 3));
+    $newCfg['ruyi_max_cluster_len'] = max($newCfg['ruyi_min_cluster_len'], (int)($_POST['ruyi_max_cluster_len'] ?? 15));
+    $newCfg['ruyi_min_cluster_sum'] = max(5.0, round((float)($_POST['ruyi_min_cluster_sum'] ?? 15.0), 2));
+    $newCfg['ruyi_max_cluster_sum'] = max($newCfg['ruyi_min_cluster_sum'], round((float)($_POST['ruyi_max_cluster_sum'] ?? 35.0), 2));
+    $newCfg['ruyi_short_seg_threshold'] = max(0.5, round((float)($_POST['ruyi_short_seg_threshold'] ?? 3.0), 2));
+    $newCfg['ruyi_very_short_threshold'] = max(0.1, round((float)($_POST['ruyi_very_short_threshold'] ?? 1.5), 2));
+    $newCfg['ruyi_enable_discontinuity'] = isset($_POST['ruyi_enable_discontinuity']);
+    $newCfg['ruyi_auto_optimize_enabled'] = isset($_POST['ruyi_auto_optimize_enabled']);
+    $newCfg['ruyi_auto_optimize_hour'] = max(0, min(23, (int)($_POST['ruyi_auto_optimize_hour'] ?? 3)));
+    $newCfg['ruyi_auto_optimize_interval_hours'] = max(1, (int)($_POST['ruyi_auto_optimize_interval_hours'] ?? 24));
+    $newCfg['ruyi_auto_optimize_sample_url'] = trim($_POST['ruyi_auto_optimize_sample_url'] ?? '');
+    $newCfg['ruyi_debug_mode'] = isset($_POST['ruyi_debug_mode']);
     writePhpFile(__DIR__ . '/config/noad.php', buildNoadConfig($newCfg));
     $noadConfig = require __DIR__ . '/config/noad.php';
-    $msg = 'Noad 配置已保存';
+    $msg = 'Noad 配置（含如意算法参数）已保存';
 }
 
 // ========= 查询数据供模板 =========
@@ -1398,6 +1621,215 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
             </div>
             <pre id="algoTestResult" style="margin-top:12px;padding:12px;background:#f8f8fa;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;color:#333">结果将显示在此处...</pre>
         </div>
+
+        <!-- ===== 如意去广告算法 v2.1 参数设置（核心功能） ===== -->
+        <?php
+            $ry = $noadConfig; // 读取 noad 配置中的如意参数
+            $ruyiEnabled = $ry['ruyi_enabled'] ?? true;
+            $ruyiScore = $ry['ruyi_score_threshold'] ?? 4;
+            $ruyiBaseline = $ry['ruyi_baseline_sec'] ?? 4.00;
+            $ruyiTol = $ry['ruyi_baseline_tolerance'] ?? 0.10;
+            $ruyiMinClu = $ry['ruyi_min_cluster_len'] ?? 3;
+            $ruyiMaxClu = $ry['ruyi_max_cluster_len'] ?? 15;
+            $ruyiMinSum = $ry['ruyi_min_cluster_sum'] ?? 15.0;
+            $ruyiMaxSum = $ry['ruyi_max_cluster_sum'] ?? 35.0;
+            $ruyiShort = $ry['ruyi_short_seg_threshold'] ?? 3.0;
+            $ruyiVeryShort = $ry['ruyi_very_short_threshold'] ?? 1.5;
+            $ruyiDisc = $ry['ruyi_enable_discontinuity'] ?? true;
+            $ruyiAuto = $ry['ruyi_auto_optimize_enabled'] ?? true;
+            $ruyiHour = $ry['ruyi_auto_optimize_hour'] ?? 3;
+            $ruyiInterval = $ry['ruyi_auto_optimize_interval_hours'] ?? 24;
+            $ruyiSampleUrl = $ry['ruyi_auto_optimize_sample_url'] ?? '';
+            $ruyiDebug = $ry['ruyi_debug_mode'] ?? false;
+        ?>
+        <div class="panel">
+            <h3>🎯 如意去广告算法 v2.1 — 参数设置</h3>
+            <p style="color:#666;font-size:13px">针对如意（Ruyi）解析源的 M3U8 时长序列模式识别算法。默认参数平衡精准度与误删率，可根据观看效果微调。</p>
+            <form method="post">
+                <input type="hidden" name="action" value="save_noad_config">
+                <!-- 保留原 noad 配置不被覆盖 -->
+                <input type="hidden" name="noad_enabled" value="<?php echo $ry['noad_enabled'] ?? true ? '1' : '0'; ?>">
+                <input type="hidden" name="enable_ad_filter" value="<?php echo $ry['enable_ad_filter'] ?? true ? '1' : '0'; ?>">
+                <input type="hidden" name="cache_enabled" value="<?php echo $ry['cache_enabled'] ?? true ? '1' : '0'; ?>">
+                <input type="hidden" name="enable_multi_source" value="<?php echo $ry['enable_multi_source'] ?? true ? '1' : '0'; ?>">
+                <input type="hidden" name="stats_enabled" value="<?php echo $ry['stats_enabled'] ?? true ? '1' : '0'; ?>">
+                <input type="hidden" name="cache_ttl" value="<?php echo (int)($ry['cache_ttl'] ?? 1800); ?>">
+                <input type="hidden" name="max_source_try" value="<?php echo (int)($ry['max_source_try'] ?? 3); ?>">
+                <input type="hidden" name="request_timeout" value="<?php echo (int)($ry['request_timeout'] ?? 10); ?>">
+                <input type="hidden" name="ad_keyword_threshold" value="<?php echo (int)($ry['ad_keyword_threshold'] ?? 2); ?>">
+                <input type="hidden" name="debug_mode" value="<?php echo $ry['debug_mode'] ?? false ? '1' : '0'; ?>">
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+                    <!-- 列 1 -->
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">📌 基础开关</h4>
+                        <div style="padding:6px 0">
+                            <label style="font-size:14px">
+                                <input type="checkbox" name="ruyi_enabled" <?php echo $ruyiEnabled ? 'checked' : ''; ?>> 启用如意算法（整体开关）
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:24px;margin-top:4px">关闭后仅使用关键词/域名过滤</div>
+                        </div>
+                        <div style="padding:6px 0">
+                            <label style="font-size:14px">
+                                <input type="checkbox" name="ruyi_enable_discontinuity" <?php echo $ruyiDisc ? 'checked' : ''; ?>> 启用 DISCONTINUITY 信号
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:24px;margin-top:4px">检测编码断层（典型广告插入点）辅助判断</div>
+                        </div>
+                        <div style="padding:6px 0">
+                            <label style="font-size:14px">
+                                <input type="checkbox" name="ruyi_debug_mode" <?php echo $ruyiDebug ? 'checked' : ''; ?>> 调试模式（开发用）
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 列 2 -->
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🎚 Score 阈值（精准度控制）</h4>
+                        <div style="padding:8px 0">
+                            <label style="font-size:14px">删除判定 Score 阈值：
+                                <input type="number" name="ruyi_score_threshold" min="1" max="10" step="1"
+                                    value="<?php echo (int)$ruyiScore; ?>"
+                                    style="width:60px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">
+                                推荐值：<b>3=保守</b>（少删但可能漏广告），<b>4=平衡</b>，<b>5=激进</b>（多删但可能误删）
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 列 3 -->
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">📏 片段时长检测</h4>
+                        <div style="padding:6px 0;font-size:14px">
+                            <label>基准片段时长（秒）：
+                                <input type="number" name="ruyi_baseline_sec" min="0.5" max="30" step="0.1"
+                                    value="<?php echo number_format($ruyiBaseline, 2); ?>"
+                                    style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">如意资源站默认 <b>4.00s</b>（100帧 GoP）</div>
+                        </div>
+                        <div style="padding:6px 0;font-size:14px">
+                            <label>基准容差（秒）：
+                                <input type="number" name="ruyi_baseline_tolerance" min="0.01" max="2" step="0.01"
+                                    value="<?php echo number_format($ruyiTol, 2); ?>"
+                                    style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 0.10s（4.0s ± 0.1s 视为正常片段）</div>
+                        </div>
+                    </div>
+
+                    <!-- 列 4 -->
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">📐 簇（Cluster）检测范围</h4>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>最小簇长度（片段数）：
+                                <input type="number" name="ruyi_min_cluster_len" min="1" max="20" step="1"
+                                    value="<?php echo (int)$ruyiMinClu; ?>"
+                                    style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 3（少于 3 个非标准片段视为正常场景切换）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>最大簇长度（片段数）：
+                                <input type="number" name="ruyi_max_cluster_len" min="3" max="100" step="1"
+                                    value="<?php echo (int)$ruyiMaxClu; ?>"
+                                    style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 15（过长的复杂片段组视为正片）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>最小簇总时长（秒）：
+                                <input type="number" name="ruyi_min_cluster_sum" min="5" max="30" step="1"
+                                    value="<?php echo (float)$ruyiMinSum; ?>"
+                                    style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 15s（短于 15s 的片段组可能不是完整广告）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>最大簇总时长（秒）：
+                                <input type="number" name="ruyi_max_cluster_sum" min="15" max="180" step="1"
+                                    value="<?php echo (float)$ruyiMaxSum; ?>"
+                                    style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 35s（长于 35s 的复杂片段组视为正片）</div>
+                        </div>
+                    </div>
+
+                    <!-- 列 5 -->
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🔔 片段时长信号</h4>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>短片段阈值（秒）：
+                                <input type="number" name="ruyi_short_seg_threshold" min="0.5" max="8" step="0.1"
+                                    value="<?php echo number_format($ruyiShort, 2); ?>"
+                                    style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 3.0s（片段<3s = 广告强信号，增加 Score）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>极短片段阈值（秒）：
+                                <input type="number" name="ruyi_very_short_threshold" min="0.1" max="3" step="0.1"
+                                    value="<?php echo number_format($ruyiVeryShort, 2); ?>"
+                                    style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 1.5s（片段<1.5s = 直接删除，广告过渡/收尾标志）</div>
+                        </div>
+                    </div>
+
+                    <!-- 列 6 -->
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🤖 自动检测与优化</h4>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>
+                                <input type="checkbox" name="ruyi_auto_optimize_enabled" <?php echo $ruyiAuto ? 'checked' : ''; ?>> 启用自动检测
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:24px;margin-top:4px">每天自动运行检测，调整参数适配视频源变化</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>检测时间（小时，0~23）：
+                                <input type="number" name="ruyi_auto_optimize_hour" min="0" max="23" step="1"
+                                    value="<?php echo (int)$ruyiHour; ?>"
+                                    style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 3 点（服务器空闲时间执行）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>检测间隔（小时）：
+                                <input type="number" name="ruyi_auto_optimize_interval_hours" min="1" max="168" step="1"
+                                    value="<?php echo (int)$ruyiInterval; ?>"
+                                    style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px">
+                            </label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">默认 24 小时（每天一次；可设 12 小时两次）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>示例视频 URL（可选）：
+                                <input type="text" name="ruyi_auto_optimize_sample_url"
+                                    value="<?php echo htmlspecialchars($ruyiSampleUrl); ?>"
+                                    placeholder="留空则使用随机示例；填写常用视频地址效果更佳"
+                                    style="width:100%;padding:6px;border:1px solid #ddd;border-radius:4px;margin-top:4px">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:20px;padding:14px 18px;background:#fffbeb;border-radius:8px;border-left:4px solid #f59e0b">
+                    <b style="color:#92400e">💡 使用提示：</b>
+                    <div style="color:#666;font-size:13px;margin-top:6px;line-height:1.6">
+                        1. 如发现广告残留 → 降低 <b>Score 阈值</b>（从 4 降到 3）；或提高 <b>最小簇长度/总时长</b>，让检测更灵敏。<br>
+                        2. 如发现正片被误删 → 提高 <b>Score 阈值</b>（从 4 升到 5）；或提高 <b>最小簇长度/总时长</b>，让检测更保守。<br>
+                        3. 也可点击下方的「一键测试当前参数」按钮，通过示例视频自动验证。
+                    </div>
+                </div>
+
+                <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px;background:#4f46e5">💾 保存如意参数</button>
+                    <button type="button" class="btn-primary-sm" onclick="ruyiTestCurrent()" style="font-size:14px;padding:10px 24px;background:#10b981">🧪 测试当前参数</button>
+                    <button type="button" class="btn-primary-sm" onclick="ruyiAutoOptimize()" style="font-size:14px;padding:10px 24px;background:#f59e0b">🤖 一键自动优化</button>
+                    <button type="button" class="btn-primary-sm" onclick="ruyiResetDefault()" style="font-size:14px;padding:10px 24px;background:#6b7280">↩ 恢复默认值</button>
+                </div>
+                <div id="ruyiResult" style="margin-top:20px;padding:14px;background:#f0f9ff;border-radius:8px;color:#075985;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:30px">💡 点击按钮开始测试...</div>
+            </form>
+        </div>
     </div>
 
     <?php
@@ -1637,6 +2069,90 @@ function testAlgorithms() {
         })
         .catch(function(e) { resultEl.textContent = '请求失败：' + e.message; });
 }
+// ===== 如意算法：测试当前参数 =====
+function ruyiTestCurrent() {
+    var resultEl = document.getElementById('ruyiResult');
+    resultEl.textContent = '🔍 正在运行如意测试...（下载示例 M3U8 → 应用算法 → 输出结果）';
+    var formData = new FormData();
+    formData.append('action', 'ajax_ruyi_test');
+    var sampleUrl = document.querySelector('input[name="ruyi_auto_optimize_sample_url"]').value.trim();
+    if (sampleUrl) formData.append('sample_url', sampleUrl);
+    fetch('<?php echo htmlspecialchars($currentScript); ?>', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                resultEl.textContent = data.report || '测试完成';
+            } else {
+                resultEl.textContent = '❌ 测试失败：' + (data.msg || '未知错误');
+            }
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== 如意算法：一键自动优化 =====
+function ruyiAutoOptimize() {
+    var resultEl = document.getElementById('ruyiResult');
+    resultEl.textContent = '🤖 正在运行自动优化...（多参数扫描 → 选出最优 → 自动保存）';
+    var formData = new FormData();
+    formData.append('action', 'ajax_ruyi_auto_optimize');
+    fetch('<?php echo htmlspecialchars($currentScript); ?>', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                resultEl.textContent = data.report || '优化完成';
+                if (data.saved) alert('✅ 已自动保存最优参数！下次解析视频将使用新参数');
+                setTimeout(function(){ if (typeof reloadAlgorithms === 'function') reloadAlgorithms(); }, 500);
+            } else {
+                resultEl.textContent = '❌ 优化失败：' + (data.msg || '未知错误');
+            }
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== 如意算法：恢复默认参数（写入配置值） =====
+function ruyiResetDefault() {
+    if (!confirm('确认恢复如意算法的默认参数吗？\n当前修改将被覆盖。')) return;
+    var defaults = {
+        ruyi_score_threshold: 4,
+        ruyi_baseline_sec: 4.00,
+        ruyi_baseline_tolerance: 0.10,
+        ruyi_min_cluster_len: 3,
+        ruyi_max_cluster_len: 15,
+        ruyi_min_cluster_sum: 15,
+        ruyi_max_cluster_sum: 35,
+        ruyi_short_seg_threshold: 3.0,
+        ruyi_very_short_threshold: 1.5,
+        ruyi_auto_optimize_hour: 3,
+        ruyi_auto_optimize_interval_hours: 24
+    };
+    for (var key in defaults) {
+        var input = document.querySelector('input[name="' + key + '"]');
+        if (input) {
+            if (input.type === 'checkbox') input.checked = (defaults[key] === true || defaults[key] === 1);
+            else input.value = defaults[key];
+        }
+    }
+    // 开关类
+    ['ruyi_enabled', 'ruyi_enable_discontinuity', 'ruyi_auto_optimize_enabled'].forEach(function(key) {
+        var el = document.querySelector('input[name="' + key + '"]');
+        if (el) el.checked = true;
+    });
+    document.getElementById('ruyiResult').textContent = '↩ 已填充默认值，请点击「保存如意参数」来生效';
+}
+// ===== 如意算法：页面访问时触发每日自动检测 =====
+(function() {
+    <?php if (!empty($noadConfig['ruyi_auto_optimize_enabled'])): ?>
+    // 每天仅触发一次，避免每次访问都运行
+    var lastKey = 'ruyi_last_optimize_' + '<?php echo date('Y-m-d'); ?>';
+    var now = new Date();
+    var targetHour = <?php echo (int)($noadConfig['ruyi_auto_optimize_hour'] ?? 3); ?>;
+    // 当访问时间 >= 目标小时，且当日未运行过 → 自动触发
+    if (now.getHours() >= targetHour && !localStorage.getItem(lastKey)) {
+        localStorage.setItem(lastKey, '1');
+        setTimeout(function() {
+            try { ruyiAutoOptimize(); } catch (e) {}  // 静默失败，不影响用户
+        }, 2000);
+    }
+    <?php endif; ?>
+})();
 </script>
 </body>
 </html>

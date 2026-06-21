@@ -48,22 +48,88 @@ class RuyiPatternCleaner extends AbstractAlgorithm
     public $matchPatterns = [];  // 空数组 = 总是执行
     public $enabled = true;
 
-    // === 可配置参数（可在后台调整）===
-    private $baselineDuration = 4.00;           // 基准片段时长（资源站标准编码）
-    private $baselineTolerance = 0.10;          // 基准容差（4.0 ± 0.1s 都算正常片段）
-    private $minClusterLength = 3;              // 簇最小长度（段）
-    private $maxClusterLength = 15;             // 簇最大长度（段）
-    private $minClusterSum = 15.0;              // 簇最小总时长（秒）
-    private $maxClusterSum = 35.0;              // 簇最大总时长（秒）
-    private $shortFragmentThreshold = 3.0;      // 短片段阈值（秒）
-    private $veryShortThreshold = 1.5;          // 极短片段阈值（秒）
-    private $discontinuitySurge = 2.0;          // DISCONTINUITY 前后时长突变阈值
-    private $adKeywordPatterns = [];            // URI 关键词（对 hash 资源站无效，但保留）
+    // === 可配置参数（从 config/noad.php 中的 ruyi_* 加载，可在后台调整）===
+    /** @var float 基准片段时长（秒）：资源站标准编码单元，通常为 4.00s = 25fps*100帧 GoP */
+    private $baselineDuration = 4.00;
+    /** @var float 基准容差（秒）：±0.10s 内都算正常视频片段 */
+    private $baselineTolerance = 0.10;
+    /** @var int 广告簇最小长度（段）：少于此值视为正常场景切换 */
+    private $minClusterLength = 3;
+    /** @var int 广告簇最大长度（段）：超过此值视为正常内容 */
+    private $maxClusterLength = 15;
+    /** @var float 广告簇最小总时长（秒）：典型广告块通常 > 15秒 */
+    private $minClusterSum = 15.0;
+    /** @var float 广告簇最大总时长（秒）：典型广告块通常 < 35秒 */
+    private $maxClusterSum = 35.0;
+    /** @var float 短片段阈值（秒）：<3.0s 的非标准片段 = 广告片段强信号 */
+    private $shortFragmentThreshold = 3.0;
+    /** @var float 极短片段阈值（秒）：<1.5s 的片段 = 直接删除（广告过渡/收尾标志） */
+    private $veryShortThreshold = 1.5;
+    /** @var bool 是否启用 DISCONTINUITY 标记辅助判断 */
+    private $enableDiscontinuity = true;
+    /** @var float DISCONTINUITY 时长突变阈值（秒）：>2s 且 <基准时长视为广告信号 */
+    private $discontinuitySurge = 2.0;
+    /** @var int Score 阈值：分数 >= 此值才删除该簇（3=保守, 4=平衡, 5=激进，默认4） */
+    private $scoreThreshold = 4;
+    /** @var bool 调试模式：返回详细识别信息（开发/调试专用） */
+    private $debugMode = false;
 
-    public function name() { return '如意时长序列模式识别 v2.0'; }
-    public function description() { return '智能簇检测 + DISCONTINUITY 边界 + 时长三重验证，基于真实M3U8数据分析重构'; }
+    /**
+     * 构造函数：从 config/noad.php（后台保存的配置）加载参数，覆盖默认值
+     * 配置键格式：ruyi_xxx（如 ruyi_score_threshold）
+     */
+    public function __construct() {
+        $configPath = __DIR__ . '/../config/noad.php';
+        if (file_exists($configPath)) {
+            $config = @include $configPath;
+            if (is_array($config)) {
+                if (isset($config['ruyi_enabled']) && $config['ruyi_enabled'] === false)   $this->enabled = false;
+                if (isset($config['ruyi_score_threshold']))         $this->scoreThreshold = (int)$config['ruyi_score_threshold'];
+                if (isset($config['ruyi_baseline_sec']))            $this->baselineDuration = (float)$config['ruyi_baseline_sec'];
+                if (isset($config['ruyi_baseline_tolerance']))      $this->baselineTolerance = (float)$config['ruyi_baseline_tolerance'];
+                if (isset($config['ruyi_min_cluster_len']))        $this->minClusterLength = (int)$config['ruyi_min_cluster_len'];
+                if (isset($config['ruyi_max_cluster_len']))        $this->maxClusterLength = (int)$config['ruyi_max_cluster_len'];
+                if (isset($config['ruyi_min_cluster_sum']))        $this->minClusterSum = (float)$config['ruyi_min_cluster_sum'];
+                if (isset($config['ruyi_max_cluster_sum']))        $this->maxClusterSum = (float)$config['ruyi_max_cluster_sum'];
+                if (isset($config['ruyi_short_seg_threshold']))    $this->shortFragmentThreshold = (float)$config['ruyi_short_seg_threshold'];
+                if (isset($config['ruyi_very_short_threshold']))   $this->veryShortThreshold = (float)$config['ruyi_very_short_threshold'];
+                if (isset($config['ruyi_enable_discontinuity']))   $this->enableDiscontinuity = (bool)$config['ruyi_enable_discontinuity'];
+                if (isset($config['ruyi_debug_mode']))             $this->debugMode = (bool)$config['ruyi_debug_mode'];
+            }
+        }
+    }
+
+    /** 返回算法名称（带版本号） */
+    public function name() { return '如意时长序列模式识别 v2.1'; }
+
+    /** 返回算法描述（动态展示当前参数，便于调试） */
+    public function description() {
+        return '智能簇检测 + DISCONTINUITY + 时长三重验证。当前阈值: score>='
+             . $this->scoreThreshold . '，基准: ' . $this->baselineDuration
+             . 's±' . $this->baselineTolerance . '，极短: ' . $this->veryShortThreshold . 's';
+    }
+
     public function author() { return 'MX-射手沫蝴蝶'; }
-    public function version() { return '2.0.0'; }
+    public function version() { return '2.1.0'; }
+
+    /**
+     * 返回当前参数（供后台调试界面展示）
+     */
+    public function getCurrentParams() {
+        return [
+            'baseline'            => $this->baselineDuration,
+            'tolerance'           => $this->baselineTolerance,
+            'min_cluster_len'     => $this->minClusterLength,
+            'max_cluster_len'     => $this->maxClusterLength,
+            'min_cluster_sum'     => $this->minClusterSum,
+            'max_cluster_sum'     => $this->maxClusterSum,
+            'short_threshold'     => $this->shortFragmentThreshold,
+            'very_short_threshold'=> $this->veryShortThreshold,
+            'discontinuity'       => $this->enableDiscontinuity ? '✓' : '✗',
+            'score_threshold'     => $this->scoreThreshold,
+            'debug_mode'          => $this->debugMode ? 'ON' : 'OFF',
+        ];
+    }
 
     /**
      * 主入口：扫描 M3U8 内容 → 标记广告片段 → 删除并返回净化后 M3U8
@@ -135,11 +201,13 @@ class RuyiPatternCleaner extends AbstractAlgorithm
                 }
             }
 
-            // 关键校验：是否有 DISCONTINUITY 边界
+            // 关键校验：是否有 DISCONTINUITY 边界（可在后台关闭此信号）
             $hasDiscontinuity = false;
-            foreach ($cluster['segments'] as $seg) {
-                if (!empty($seg['after_discontinuity'])) {
-                    $hasDiscontinuity = true; break;
+            if ($this->enableDiscontinuity) {
+                foreach ($cluster['segments'] as $seg) {
+                    if (!empty($seg['after_discontinuity'])) {
+                        $hasDiscontinuity = true; break;
+                    }
                 }
             }
 
@@ -151,17 +219,15 @@ class RuyiPatternCleaner extends AbstractAlgorithm
                 }
             }
 
-            // 综合判定：必须至少满足 2 个强信号 + 长度/sum 验证
+            // 综合判定：根据 Score 阈值（可在后台调整）判断是否为广告
             $score = 0;
             if ($hasShort) $score += 2;
             if ($hasDiscontinuity) $score += 2;
             if ($hasVeryShort) $score += 3;
-            // 簇长度 6~12 段 = 典型广告块
             if ($cluster['length'] >= 6 && $cluster['length'] <= 12) $score += 1;
-            // sum 在 18~28 秒 = 最常见广告时长
             if ($cluster['sum'] >= 18 && $cluster['sum'] <= 28) $score += 1;
 
-            if ($score >= 4) {
+            if ($score >= $this->scoreThreshold) {
                 foreach ($cluster['segments'] as $seg) {
                     $removeLineSet[$seg['extinf_idx']] = true;
                     $removeLineSet[$seg['uri_idx']] = true;
