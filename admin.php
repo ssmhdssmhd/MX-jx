@@ -392,6 +392,48 @@ elseif ($action === 'ajax_get_sites') {
     echo json_encode(array('code' => 200, 'sites' => $sites), JSON_UNESCAPED_UNICODE);
     exit;
 }
+// --- v4.2 AJAX: 自定义算法列表/切换/重载/测试 ---
+elseif ($action === 'ajax_list_algorithms' || $action === 'ajax_toggle_algo'
+      || $action === 'ajax_reload_algorithms' || $action === 'ajax_test_algorithms') {
+    header('Content-Type: application/json; charset=utf-8');
+    if (!class_exists('NoAdParser')) {
+        require_once __DIR__ . '/core/NoAdParser.php';
+    }
+    $parser = new NoAdParser();
+
+    if ($action === 'ajax_list_algorithms') {
+        echo json_encode(array(
+            'code' => 200,
+            'algorithms' => $parser->listCustomAlgorithms(),
+        ), JSON_UNESCAPED_UNICODE);
+    } elseif ($action === 'ajax_toggle_algo') {
+        $id = trim($_POST['algo_id'] ?? '');
+        $enabled = (int)($_POST['enabled'] ?? 1);
+        if ($id === '') {
+            echo json_encode(array('code' => 400, 'msg' => '缺少 id'), JSON_UNESCAPED_UNICODE);
+        } else {
+            $parser->setCustomAlgorithmEnabled($id, (bool)$enabled);
+            echo json_encode(array('code' => 200, 'id' => $id, 'enabled' => (bool)$enabled), JSON_UNESCAPED_UNICODE);
+        }
+    } elseif ($action === 'ajax_reload_algorithms') {
+        echo json_encode(array(
+            'code' => 200,
+            'algorithms' => $parser->reloadCustomAlgorithms(),
+        ), JSON_UNESCAPED_UNICODE);
+    } elseif ($action === 'ajax_test_algorithms') {
+        $input = $_POST['input'] ?? '';
+        $scope = $_POST['scope'] ?? 'all';
+        $result = $parser->applyCustomAlgorithms($input, $scope, array('original_url' => $input));
+        echo json_encode(array(
+            'code'     => 200,
+            'original' => $input,
+            'result'   => $result['data'] ?? $input,
+            'applied'  => $result['applied'] ?? array(),
+            'changed'  => ($result['data'] ?? $input) !== $input,
+        ), JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
 elseif ($action === 'save_noad_config') {
     $newCfg = $noadConfig;
     $newCfg['noad_enabled'] = isset($_POST['noad_enabled']);

@@ -52,6 +52,51 @@ switch ($mode) {
         ), JSON_UNESCAPED_UNICODE);
         exit;
 
+    // ========== v4.2 自定义算法 API ==========
+    case 'algorithms':
+        header('Content-Type: application/json; charset=utf-8');
+        header('Access-Control-Allow-Origin: *');
+        $action = $_GET['a'] ?? 'list';
+        if ($action === 'list') {
+            echo json_encode(array(
+                'code' => 200,
+                'algorithms' => $parser->listCustomAlgorithms(),
+                'enabled_count' => count(array_filter($parser->listCustomAlgorithms(), function ($x) {
+                    return !empty($x['enabled']);
+                })),
+            ), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        if ($action === 'toggle') {
+            $id = $_POST['id'] ?? $_GET['id'] ?? '';
+            $enabled = (bool)($_POST['enabled'] ?? $_GET['enabled'] ?? 1);
+            if ($id === '') { echo json_encode(['code' => 400, 'msg' => 'missing id']); exit; }
+            $parser->setCustomAlgorithmEnabled($id, $enabled);
+            echo json_encode(['code' => 200, 'id' => $id, 'enabled' => $enabled]);
+            exit;
+        }
+        if ($action === 'reload') {
+            $algos = $parser->reloadCustomAlgorithms();
+            echo json_encode(['code' => 200, 'algorithms' => $algos], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        if ($action === 'test') {
+            $input = $_POST['input'] ?? $_GET['input'] ?? '';
+            $scope = $_POST['scope'] ?? $_GET['scope'] ?? 'all';
+            if ($input === '') { echo json_encode(['code' => 400, 'msg' => 'missing input']); exit; }
+            $result = $parser->applyCustomAlgorithms($input, $scope, ['original_url' => 'test://local']);
+            echo json_encode(array(
+                'code'     => 200,
+                'original' => $result['original'] ?? $input,
+                'result'   => $result['data'] ?? $input,
+                'applied'  => $result['applied'] ?? [],
+                'changed'  => ($result['data'] ?? $input) !== $input,
+            ), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        echo json_encode(['code' => 400, 'msg' => 'unknown action: ' . $action], JSON_UNESCAPED_UNICODE);
+        exit;
+
     case 'api':
     default:
         if ($url === '') {
