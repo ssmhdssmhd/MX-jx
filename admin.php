@@ -185,6 +185,19 @@ function buildNoadConfig($c) {
                 ? "'" . addslashes(trim($c['ruyi_auto_optimize_sample_url'])) . "'" : "''") . ",\n" .
             "    // 调试模式：true =在 M3U8 中加入调试标记（开发专用），默认 false\n" .
             "    'ruyi_debug_mode' => " . (!empty($c['ruyi_debug_mode']) ? 'true' : 'false') . ",\n" .
+            "    // ========================================================\n" .
+            "    // ===== MD5 指纹去广告参数（万能规则1） =================\n" .
+            "    'md5_enabled' => " . (isset($c['md5_enabled']) && !$c['md5_enabled'] ? 'false' : 'true') . ",\n" .
+            "    'md5_repeat_threshold' => " . max(1, (int)($c['md5_repeat_threshold'] ?? 3)) . ",\n" .
+            "    'md5_max_concurrency' => " . max(1, (int)($c['md5_max_concurrency'] ?? 6)) . ",\n" .
+            "    'md5_segment_timeout' => " . max(5, (int)($c['md5_segment_timeout'] ?? 15)) . ",\n" .
+            "    'md5_total_timeout' => " . max(30, (int)($c['md5_total_timeout'] ?? 60)) . ",\n" .
+            "    'md5_max_segment_kb' => " . max(500, (int)($c['md5_max_segment_kb'] ?? 5000)) . ",\n" .
+            "    'md5_use_proxy' => " . (isset($c['md5_use_proxy']) && !$c['md5_use_proxy'] ? 'false' : 'true') . ",\n" .
+            "    'md5_min_interval_ms' => " . max(50, (int)($c['md5_min_interval_ms'] ?? 100)) . ",\n" .
+            "    'md5_auto_learn' => " . (isset($c['md5_auto_learn']) && !$c['md5_auto_learn'] ? 'false' : 'true') . ",\n" .
+            "    'md5_db_cleanup_days' => " . max(7, (int)($c['md5_db_cleanup_days'] ?? 30)) . ",\n" .
+            "    'md5_debug' => " . (!empty($c['md5_debug']) ? 'true' : 'false') . ",\n" .
             ");\n";
 }
 function defaultTypes() {
@@ -218,6 +231,7 @@ $ajaxEarlyWhitelist = [
     'ajax_list_algorithms', 'ajax_toggle_algo',
     'ajax_reload_algorithms', 'ajax_test_algorithms',
     'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
+    'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist',
 ];
 if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
     header('Content-Type: application/json; charset=utf-8');
@@ -289,8 +303,7 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             'applied' => $result['applied'] ?? [],
             'changed' => ($result['data'] ?? $input) !== $input,
         ], JSON_UNESCAPED_UNICODE);
-    } elseif ($ajaxEarlyAction === 'ajax_ruyi_test' || $ajaxEarlyAction === 'ajax_ruyi_auto_optimize') {
-        // === 如意算法：测试 / 自动优化 ===
+    } elseif ($ajaxEarlyAction === 'ajax_ruyi_test' || $ajaxEarlyAction === 'ajax_ruyi_auto_optimize') {        // === 如意算法：测试 / 自动优化 ===
         // 步骤 1：选择示例 M3U8 URL
         $sampleUrl = trim($_POST['sample_url'] ?? '');
         $testUrls = [
@@ -458,6 +471,106 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 . "✅ 已自动保存到 config/noad.php，下次解析视频将使用新参数！";
         echo json_encode(['code' => 200, 'report' => $report, 'saved' => true], JSON_UNESCAPED_UNICODE);
         exit;
+    } elseif ($ajaxEarlyAction === 'ajax_md5_test' || $ajaxEarlyAction === 'ajax_md5_stats'
+        || $ajaxEarlyAction === 'ajax_md5_mark' || $ajaxEarlyAction === 'ajax_md5_whitelist') {
+        // === MD5 指纹去广告：测试 / 统计 / 标记 ===
+        require_once __DIR__ . '/algorithms/md5_pattern_cleaner.php';
+        $md5 = new MD5PatternCleaner();
+        $md5DB = new MD5FingerprintDB();
+
+        if ($ajaxEarlyAction === 'ajax_md5_test') {
+            // 下载一个视频的 M3U8，统计 MD5 指纹并展示
+            $sampleUrl = trim($_POST['sample_url'] ?? '');
+            $fallback = [
+                'https://svip.ryiplay18.com/20260621/7402_adcfbfd7/index.m3u8',
+                'https://svip.ryiplay18.com/20260525/7279_51e48837/index.m3u8',
+            ];
+            $testedUrl = $sampleUrl;
+            $m3u8 = null;
+            if ($testedUrl === '') { $testedUrl = $fallback[0]; }
+            $m3u8 = MD5PatternCleaner::downloadM3U8($testedUrl, false);
+            if ($m3u8 === false) {
+                foreach ($fallback as $url) {
+                    $m3u8 = MD5PatternCleaner::downloadM3U8($url, false);
+                    if ($m3u8 !== false) { $testedUrl = $url; break; }
+                }
+            }
+            if ($m3u8 === false) {
+                echo json_encode(['code' => 500, 'error' => '无法下载 M3U8'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $segCount = substr_count($m3u8, 'EXTINF:');
+
+            // 应用 MD5 算法
+            $result = $md5->apply($m3u8, $testedUrl);
+            $stats = $result['stats'] ?? [];
+
+            // 统计报告
+            $report = "🧪 MD5 指纹测试完成\n\n"
+                    . "测试视频：$testedUrl\n"
+                    . "原始片段：$segCount 段\n"
+                    . "本次下载：" . ($stats['downloaded'] ?? 0) . " 段\n"
+                    . "下载失败：" . ($stats['failed_downloads'] ?? 0) . " 段\n"
+                    . "删除广告：" . ($stats['removed_ad'] ?? 0) . " 段\n"
+                    . "保留正片：" . (($stats['kept_whitelist'] ?? 0) + ($stats['kept_new'] ?? 0) + ($stats['kept_low_freq'] ?? 0)) . " 段\n"
+                    . "耗时：" . ($stats['elapsed_ms'] ?? 0) . " ms\n"
+                    . "实际并发：" . ($stats['concurrency'] ?? 0) . " 线程\n"
+                    . "数据库状态：" . ($md5DB->isReady() ? "✅ 正常" : "❌ 异常") . "\n";
+
+            if (isset($stats['skipped_protection']) && $stats['skipped_protection'] > 0) {
+                $report .= "⚠️ 跳过片段（保护模式）：" . $stats['skipped_protection'] . " 段\n";
+            }
+
+            // 数据库统计
+            $dbStats = $md5DB->getStats();
+            $report .= "\n📊 MD5 指纹库统计：\n"
+                     . "  总指纹：" . ($dbStats['total'] ?? 0) . " 个\n"
+                     . "  今日新指纹：" . ($dbStats['today_segments'] ?? 0) . " 个\n"
+                     . "  数据库大小：" . round($md5DB->getDbSize() / 1024, 1) . " KB";
+
+            echo json_encode(['code' => 200, 'report' => $report, 'segment_count' => $segCount, 'stats' => $stats], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if ($ajaxEarlyAction === 'ajax_md5_stats') {
+            // 快速统计
+            $dbStats = $md5DB->getStats();
+            $top = $md5DB->getTopFrequent(20);
+            $blacklist = $md5DB->getBlacklist(50);
+            $whitelist = $md5DB->getWhitelist(50);
+            echo json_encode([
+                'code' => 200,
+                'stats' => $dbStats,
+                'top' => $top,
+                'blacklist' => $blacklist,
+                'whitelist' => $whitelist,
+                'db_size' => round($md5DB->getDbSize() / 1024, 1),
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if ($ajaxEarlyAction === 'ajax_md5_mark') {
+            $md5Hash = strtolower(trim($_POST['md5'] ?? ''));
+            $isAd = isset($_POST['is_ad']) ? (bool)$_POST['is_ad'] : true;
+            if ($md5Hash === '' || !preg_match('/^[a-f0-9]{32}$/', $md5Hash)) {
+                echo json_encode(['code' => 400, 'error' => '无效 MD5'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $md5DB->markAsAd($md5Hash, $isAd);
+            echo json_encode(['code' => 200, 'md5' => $md5Hash, 'marked' => $isAd], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if ($ajaxEarlyAction === 'ajax_md5_whitelist') {
+            $md5Hash = strtolower(trim($_POST['md5'] ?? ''));
+            if ($md5Hash === '' || !preg_match('/^[a-f0-9]{32}$/', $md5Hash)) {
+                echo json_encode(['code' => 400, 'error' => '无效 MD5'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $md5DB->addToWhitelist($md5Hash, '后台人工添加');
+            echo json_encode(['code' => 200, 'md5' => $md5Hash, 'added' => true], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
     }
     exit;
 }
@@ -705,9 +818,21 @@ elseif ($action === 'save_noad_config') {
     $newCfg['ruyi_auto_optimize_interval_hours'] = max(1, (int)($_POST['ruyi_auto_optimize_interval_hours'] ?? 24));
     $newCfg['ruyi_auto_optimize_sample_url'] = trim($_POST['ruyi_auto_optimize_sample_url'] ?? '');
     $newCfg['ruyi_debug_mode'] = isset($_POST['ruyi_debug_mode']);
+    // ===== MD5 指纹去广告参数保存 =====
+    $newCfg['md5_enabled'] = isset($_POST['md5_enabled']);
+    $newCfg['md5_repeat_threshold'] = max(1, min(20, (int)($_POST['md5_repeat_threshold'] ?? 3)));
+    $newCfg['md5_max_concurrency'] = max(1, min(20, (int)($_POST['md5_max_concurrency'] ?? 6)));
+    $newCfg['md5_segment_timeout'] = max(5, min(120, (int)($_POST['md5_segment_timeout'] ?? 15)));
+    $newCfg['md5_total_timeout'] = max(30, min(600, (int)($_POST['md5_total_timeout'] ?? 60)));
+    $newCfg['md5_max_segment_kb'] = max(500, min(50000, (int)($_POST['md5_max_segment_kb'] ?? 5000)));
+    $newCfg['md5_use_proxy'] = isset($_POST['md5_use_proxy']);
+    $newCfg['md5_min_interval_ms'] = max(50, min(5000, (int)($_POST['md5_min_interval_ms'] ?? 100)));
+    $newCfg['md5_auto_learn'] = isset($_POST['md5_auto_learn']);
+    $newCfg['md5_db_cleanup_days'] = max(7, min(365, (int)($_POST['md5_db_cleanup_days'] ?? 30)));
+    $newCfg['md5_debug'] = isset($_POST['md5_debug']);
     writePhpFile(__DIR__ . '/config/noad.php', buildNoadConfig($newCfg));
     $noadConfig = require __DIR__ . '/config/noad.php';
-    $msg = 'Noad 配置（含如意算法参数）已保存';
+    $msg = 'Noad 配置（含如意算法和 MD5 指纹参数）已保存';
 }
 
 // ========= 查询数据供模板 =========
@@ -1830,6 +1955,99 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <div id="ruyiResult" style="margin-top:20px;padding:14px;background:#f0f9ff;border-radius:8px;color:#075985;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:30px">💡 点击按钮开始测试...</div>
             </form>
         </div>
+
+        <!-- ===== 万能规则1 - MD5 指纹去广告 ===== -->
+        <?php
+            $mc = $noadConfig;
+            $md5Enabled = $mc['md5_enabled'] ?? true;
+            $md5Repeat = $mc['md5_repeat_threshold'] ?? 3;
+            $md5Concur = $mc['md5_max_concurrency'] ?? 6;
+            $md5SegTime = $mc['md5_segment_timeout'] ?? 15;
+            $md5Total = $mc['md5_total_timeout'] ?? 60;
+            $md5KB = $mc['md5_max_segment_kb'] ?? 5000;
+            $md5Proxy = $mc['md5_use_proxy'] ?? true;
+            $md5Interval = $mc['md5_min_interval_ms'] ?? 100;
+            $md5Learn = $mc['md5_auto_learn'] ?? true;
+            $md5Clean = $mc['md5_db_cleanup_days'] ?? 30;
+            $md5Debug = $mc['md5_debug'] ?? false;
+        ?>
+        <div class="panel">
+            <h3 style="margin-top:0;color:#4f46e5">🎯 万能规则1 - MD5 指纹去广告</h3>
+            <p style="color:#666;font-size:13px;margin:6px 0">
+                <b>原理：</b>广告片段会在不同视频中重复出现（MD5 相同），而正片内容是唯一的。
+                通过统计 TS 片段的 MD5 指纹出现频率，自动识别并删除广告片段。
+            </p>
+            <form method="post">
+                <input type="hidden" name="action" value="save_noad_config">
+                <div class="grid-2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">⚙️ 开关与调试</h4>
+                        <div style="padding:4px 0;font-size:14px"><label>
+                            <input type="checkbox" name="md5_enabled" <?php echo $md5Enabled ? 'checked' : ''; ?>> 启用 MD5 指纹去广告</label></div>
+                        <div style="padding:4px 0;font-size:14px"><label>
+                            <input type="checkbox" name="md5_auto_learn" <?php echo $md5Learn ? 'checked' : ''; ?>> 启用自动学习（记录新指纹）</label></div>
+                        <div style="padding:4px 0;font-size:14px"><label>
+                            <input type="checkbox" name="md5_use_proxy" <?php echo $md5Proxy ? 'checked' : ''; ?>> 使用代理池下载</label></div>
+                        <div style="padding:4px 0;font-size:14px"><label>
+                            <input type="checkbox" name="md5_debug" <?php echo $md5Debug ? 'checked' : ''; ?>> 调试模式</label></div>
+                    </div>
+
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🎯 检测灵敏度</h4>
+                        <div style="padding:4px 0;font-size:14px"><label>重复次数阈值：
+                            <input type="number" name="md5_repeat_threshold" min="2" max="10" step="1"
+                                value="<?php echo (int)$md5Repeat; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">相同 MD5 出现 >= 此值 → 判定为广告（默认 3 次）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px"><label>单片段最大 KB：
+                            <input type="number" name="md5_max_segment_kb" min="500" max="50000" step="500"
+                                value="<?php echo (int)$md5KB; ?>" style="width:100px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">超过此大小跳过（防止卡死）</div>
+                        </div>
+                    </div>
+
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🛡️ 服务器保护</h4>
+                        <div style="padding:4px 0;font-size:14px"><label>最大并发数：
+                            <input type="number" name="md5_max_concurrency" min="1" max="20" step="1"
+                                value="<?php echo (int)$md5Concur; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">实际根据 CPU/内存自动下调（默认 6）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px"><label>单片段超时（秒）：
+                            <input type="number" name="md5_segment_timeout" min="5" max="120" step="5"
+                                value="<?php echo (int)$md5SegTime; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                        <div style="padding:4px 0;font-size:14px"><label>总处理超时（秒）：
+                            <input type="number" name="md5_total_timeout" min="30" max="600" step="10"
+                                value="<?php echo (int)$md5Total; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                        <div style="padding:4px 0;font-size:14px"><label>最小请求间隔（ms）：
+                            <input type="number" name="md5_min_interval_ms" min="50" max="5000" step="50"
+                                value="<?php echo (int)$md5Interval; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">防止请求过快被封禁（默认 100ms）</div>
+                        </div>
+                    </div>
+
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🗄️ 数据库维护</h4>
+                        <div style="padding:4px 0;font-size:14px"><label>自动清理周期（天）：
+                            <input type="number" name="md5_db_cleanup_days" min="7" max="365" step="7"
+                                value="<?php echo (int)$md5Clean; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">清理超过此天数的旧记录（默认 30 天）</div>
+                        </div>
+                        <div id="md5StatsPanel" style="margin-top:10px;padding:10px;background:#fff;border-radius:8px;border:1px solid #e5e7eb">
+                            <div style="font-size:12px;color:#888">点击右侧「📊 查看指纹库统计」按钮</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px;background:#4f46e5">💾 保存 MD5 参数</button>
+                    <button type="button" class="btn-primary-sm" onclick="md5TestCurrent()" style="font-size:14px;padding:10px 24px;background:#10b981">🧪 测试当前参数</button>
+                    <button type="button" class="btn-primary-sm" onclick="md5LoadStats()" style="font-size:14px;padding:10px 24px;background:#6366f1">📊 查看指纹库统计</button>
+                    <button type="button" class="btn-primary-sm" onclick="md5ResetDefault()" style="font-size:14px;padding:10px 24px;background:#6b7280">↩ 恢复默认值</button>
+                </div>
+                <div id="md5Result" style="margin-top:20px;padding:14px;background:#f0f9ff;border-radius:8px;color:#075985;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:30px">💡 点击按钮开始测试...</div>
+            </form>
+        </div>
     </div>
 
     <?php
@@ -2152,6 +2370,97 @@ function ruyiResetDefault() {
         }, 2000);
     }
     <?php endif; ?>
+})();
+// ===== MD5 指纹去广告：测试当前参数 =====
+function md5TestCurrent() {
+    var resultEl = document.getElementById('md5Result');
+    resultEl.textContent = '🧪 正在下载并分析测试视频...';
+    var sampleUrl = document.querySelector('input[name="ruyi_auto_optimize_sample_url"]').value.trim();
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_test');
+    if (sampleUrl) formData.append('sample_url', sampleUrl);
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) resultEl.textContent = data.report;
+            else resultEl.textContent = '❌ ' + (data.error || '未知错误');
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== MD5 指纹去广告：加载统计信息 =====
+function md5LoadStats() {
+    var resultEl = document.getElementById('md5Result');
+    var panelEl = document.getElementById('md5StatsPanel');
+    resultEl.textContent = '📊 正在加载数据库统计...';
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_stats');
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                var stats = data.stats || {};
+                var top = data.top || [];
+                var blacklist = data.blacklist || [];
+                var whitelist = data.whitelist || [];
+                var txt = '📊 MD5 指纹库统计\n\n'
+                    + '总指纹数：' + (stats.total || 0) + '\n'
+                    + '今日新增：' + (stats.today_segments || 0) + '\n'
+                    + '黑名单：' + (stats.ad_count || 0) + ' 条\n'
+                    + '白名单：' + (stats.whitelist_count || 0) + ' 条\n'
+                    + '数据库大小：' + (data.db_size || 0) + ' KB\n\n';
+                if (top && top.length > 0) {
+                    txt += '🔥 高频出现的 MD5 Top ' + Math.min(top.length, 10) + '：\n';
+                    for (var i = 0; i < Math.min(top.length, 10); i++) {
+                        var t = top[i];
+                        txt += '  ' + (i + 1) + '. ' + t.md5.substring(0, 16) + '...  ' + t.count + ' 次\n';
+                    }
+                }
+                if (blacklist && blacklist.length > 0) {
+                    txt += '\n🚫 最近加入黑名单的：\n';
+                    for (var j = 0; j < Math.min(blacklist.length, 5); j++) {
+                        txt += '  ' + blacklist[j].md5.substring(0, 16) + '...\n';
+                    }
+                }
+                resultEl.textContent = txt;
+                if (panelEl) panelEl.textContent = '总指纹：' + (stats.total || 0) + ' · 今日新增：' + (stats.today_segments || 0) + ' · 数据库：' + (data.db_size || 0) + ' KB';
+            }
+            else resultEl.textContent = '❌ ' + (data.error || '未知错误');
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== MD5 指纹去广告：恢复默认参数 =====
+function md5ResetDefault() {
+    if (!confirm('确认恢复 MD5 指纹去广告的默认参数吗？\n当前修改将被覆盖。')) return;
+    var defaults = {
+        md5_repeat_threshold: 3,
+        md5_max_concurrency: 6,
+        md5_segment_timeout: 15,
+        md5_total_timeout: 60,
+        md5_max_segment_kb: 5000,
+        md5_min_interval_ms: 100,
+        md5_db_cleanup_days: 30
+    };
+    for (var key in defaults) {
+        var input = document.querySelector('input[name="' + key + '"]');
+        if (input) input.value = defaults[key];
+    }
+    ['md5_enabled', 'md5_auto_learn', 'md5_use_proxy'].forEach(function(key) {
+        var el = document.querySelector('input[name="' + key + '"]');
+        if (el) el.checked = true;
+    });
+    document.getElementById('md5Result').textContent = '↩ 已填充默认值，请点击「保存 MD5 参数」来生效';
+}
+// ===== MD5 指纹去广告：页面访问时触发每日检测 =====
+(function() {
+    var md5Enabled = <?php echo !empty($noadConfig['md5_enabled']) ? 'true' : 'false'; ?>;
+    if (!md5Enabled) return;
+    var md5LastKey = 'md5_last_test_' + '<?php echo date('Y-m-d'); ?>';
+    if (!localStorage.getItem(md5LastKey)) {
+        localStorage.setItem(md5LastKey, '1');
+        setTimeout(function() {
+            try { md5LoadStats(); } catch (e) {}
+        }, 3000);
+    }
 })();
 </script>
 </body>
