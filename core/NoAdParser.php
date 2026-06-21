@@ -21,6 +21,7 @@ class NoAdParser {
     private $adRulesCache;       // 广告关键词本地缓存
     private $whitelistCache;     // 白名单关键词本地缓存
     private $debug;
+    private $registry;           // 自定义算法注册表（v4.2）
 
     public function __construct() {
         $this->config = require __DIR__ . '/../config/noad.php';
@@ -40,6 +41,23 @@ class NoAdParser {
         }
 
         $this->loadRules();
+
+        // ========== 自定义算法注册表（v4.2 新增） ==========
+        if (!empty($this->config['enable_custom_algorithms'])) {
+            if (!class_exists('AbstractAlgorithm', false)) {
+                $algoDir = __DIR__ . '/../algorithms';
+                if (file_exists($algoDir . '/AbstractAlgorithm.php')) {
+                    require_once $algoDir . '/AbstractAlgorithm.php';
+                }
+                if (file_exists($algoDir . '/AlgorithmRegistry.php')) {
+                    require_once $algoDir . '/AlgorithmRegistry.php';
+                }
+            }
+            if (class_exists('AlgorithmRegistry')) {
+                $this->registry = AlgorithmRegistry::getInstance();
+                $this->registry->loadFromDir(__DIR__ . '/../algorithms');
+            }
+        }
     }
 
     // ========== 广告规则加载 ==========
@@ -489,8 +507,22 @@ class NoAdParser {
             }
         }
 
+        $cleanContent = implode("\n", $output);
+
+        // ===== v4.2: 用户自定义算法也应用在过滤后的 M3U8 上 =====
+        if ($this->registry !== null) {
+            $ctx = ['original_url' => $GLOBALS['__noad_original_url__'] ?? '',
+                    'base_url'     => $GLOBALS['__noad_original_url__'] ?? '',
+                    'scope'        => 'm3u8',
+                    'parse_time'   => time()];
+            $custom = $this->registry->applyAll($cleanContent, 'm3u8', $ctx);
+            if (is_array($custom) && !empty($custom['data'])) {
+                $cleanContent = $custom['data'];
+            }
+        }
+
         return array(
-            'content' => implode("\n", $output),
+            'content' => $cleanContent,
             'removed' => $removed,
             'total'   => $total,
         );
@@ -965,6 +997,24 @@ class NoAdParser {
             $result['ad_tokens_removed'] += max(0, $before - $after);
         }
 
+        // ========== 用户自定义算法（v4.2 插件式扩展）==========
+        if ($this->registry !== null) {
+            $scope = 'all';
+            $ctx = [
+                'original_url' => $url,
+                'site_name'    => $result['matched_site'],
+                'base_url'     => $url,
+                'parse_time'   => time(),
+                'scope'        => $scope,
+            ];
+            $custom = $this->registry->applyAll($data, $scope, $ctx);
+            if (is_array($custom) && isset($custom['data'])) {
+                $result['custom_algorithms_applied'] = $custom['applied'] ?? [];
+                $result['custom_algorithms_count'] = count($custom['applied'] ?? []);
+                $data = $custom['data'];
+            }
+        }
+
         $result['data'] = $data;
         return $result;
     }
@@ -1314,5 +1364,51 @@ class NoAdParser {
             $c += substr_count(strtolower($data), strtolower($t));
         }
         return $c;
+    }
+
+    // ========== v4.2 自定义算法对外接口 ==========
+
+    /** 返回所有自定义算法的数组摘要 */
+    public function listCustomAlgorithms() {
+        if ($this->registry === null) return [];
+        return $this->registry->summary();
+    }
+
+    /** 启用/禁用某个算法 */
+    public function setCustomAlgorithmEnabled($id, $enabled) {
+        if ($this->registry === null) return false;
+        $this->registry->setEnabled($id, $enabled);
+        return true;
+    }
+
+    /** 对输入文本应用所有启用中的自定义算法 */
+    public function applyCustomAlgorithms($data, $scope = 'all', $context = []) {
+        if ($this->registry === null) {
+            return ['data' => $data, 'applied' => [], 'original' => $data];
+        }
+        return $this->registry->applyAll($data, $scope, $context);
+    }
+
+    /** 重新扫描目录（热更新算法）*/
+    public function reloadCustomAlgorithms() {
+        if ($this->registry === null) {
+            // 首次加载
+            if (!class_exists('AbstractAlgorithm', false)) {
+                $algoDir = __DIR__ . '/../algorithms';
+                if (file_exists($algoDir . '/AbstractAlgorithm.php')) {
+                    require_once $algoDir . '/AbstractAlgorithm.php';
+                }
+                if (file_exists($algoDir . '/AlgorithmRegistry.php')) {
+                    require_once $algoDir . '/AlgorithmRegistry.php';
+                }
+            }
+            if (class_exists('AlgorithmRegistry')) {
+                $this->registry = AlgorithmRegistry::getInstance();
+            }
+        }
+        if ($this->registry !== null) {
+            $this->registry->loadFromDir(__DIR__ . '/../algorithms', true);
+        }
+        return $this->registry ? $this->registry->summary() : [];
     }
 }

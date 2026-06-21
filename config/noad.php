@@ -147,6 +147,10 @@ return array(
     "enable_resource_site_cleaning" => true,   // 启用资源站域名识别 + suanfa 算法清理
     "resource_site_debug" => false,            // 是否返回资源站识别信息（供调试）
 
+    // ========== 自定义算法扩展（v4.2 新增）==========
+    "enable_custom_algorithms" => true,        // 启用 /algorithms 目录下的自定义算法扩展
+    "custom_algorithms_scope" => "all",        // 默认作用域: all / url / m3u8
+
     // ========== 预置资源站（后台会从配置 + 数据库合并）==========
     "resource_sites" => array(
         // 电影天堂 (dytt)

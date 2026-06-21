@@ -102,6 +102,7 @@ code.monocode { background:#f5f5fa; padding:2px 6px; border-radius:4px; font-siz
         <button data-tab="platform" class="<?php echo $page==='platform'?'active':''; ?>">🎯 平台规则</button>
         <button data-tab="switch" class="<?php echo $page==='switch'?'active':''; ?>">🔀 系统开关</button>
         <button data-tab="zjk" class="<?php echo $page==='zjk'?'active':''; ?>">📝 自定义接口</button>
+        <button data-tab="custom_algorithms" class="<?php echo $page==='custom_algorithms'?'active':''; ?>">🧩 自定义算法</button>
         <button data-tab="backup" class="<?php echo $page==='backup'?'active':''; ?>">💾 备份日志</button>
         <button data-tab="password" class="<?php echo $page==='password'?'active':''; ?>">🔐 修改密码</button>
         <button data-tab="setting" class="<?php echo $page==='setting'?'active':''; ?>">🛠️ 后台设置</button>
@@ -552,6 +553,80 @@ code.monocode { background:#f5f5fa; padding:2px 6px; border-radius:4px; font-siz
             ?></textarea>
             <div style="margin-top:12px;"><button type="submit" class="btn-primary-sm" style="font-size:14px; padding:10px 24px;">💾 保存</button></div>
         </form>
+    </div>
+
+    <?php
+    // ========= 9.5 自定义算法管理 =========
+    ?>
+    <div class="tab-panel <?php echo $page==='custom_algorithms'?'active':''; ?>" id="tab-custom_algorithms">
+        <h2>🧩 自定义算法管理（v4.2）</h2>
+        <p style="color:#666;">目录：<code class="monocode">/algorithms/*.php</code> — 每个文件为一个独立算法类，继承 <code class="monocode">AbstractAlgorithm</code>。系统启动时自动扫描加载，可在此处启用/禁用、重新扫描、或在本地测试。</p>
+
+        <div class="panel">
+            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                <button type="button" class="btn-primary-sm" onclick="reloadAlgorithms()">🔄 重新扫描算法</button>
+                <span id="algoStatus" style="color:#555; font-size:13px;">就绪</span>
+                <span style="margin-left:auto; color:#888; font-size:13px;">共 <strong id="algoTotal">0</strong> 个算法 · 启用 <strong id="algoEnabled">0</strong> 个</span>
+            </div>
+
+            <h3 style="margin-top:20px;">📋 已加载算法列表</h3>
+            <table class="data-table" id="algoTable">
+                <thead>
+                    <tr><th>ID</th><th>名称</th><th>描述</th><th>作者</th><th>版本</th><th>作用域</th><th>优先级</th><th>执行耗时</th><th>命中次数</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="11" style="text-align:center; color:#888;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="panel">
+            <h3>🧪 本地测试</h3>
+            <p style="color:#666;">输入一段文本或 URL，体验自定义算法处理结果：</p>
+            <textarea id="algoTestInput" style="width:100%; min-height:120px; padding:10px; font-family:monospace; font-size:13px; border:1px solid #ddd; border-radius:8px;" placeholder="例如：https://example.com/play.m3u8?track_id=999&from=ad"></textarea>
+            <div style="margin-top:8px;">
+                <label>作用域：
+                    <select id="algoTestScope">
+                        <option value="all">全部</option>
+                        <option value="url">仅 URL</option>
+                        <option value="m3u8">仅 M3U8</option>
+                    </select>
+                </label>
+                <button type="button" class="btn-primary-sm" onclick="testAlgorithms()">▶ 测试</button>
+            </div>
+            <pre id="algoTestResult" style="margin-top:12px; padding:12px; background:#f8f8fa; border-radius:8px; font-size:12px; white-space:pre-wrap; word-break:break-all; color:#333;">结果将显示在此处...</pre>
+        </div>
+
+        <div class="panel">
+            <h3>📘 开发指南（快速写出你的第一个算法）</h3>
+            <p style="color:#666;">将下列示例保存为 <code class="monocode">algorithms/my_algo.php</code>，点击上方「重新扫描算法」即可生效：</p>
+            <pre style="background:#2b2b3c; color:#e6e6f0; padding:16px; border-radius:8px; font-size:12px; white-space:pre;"><?php echo htmlspecialchars(
+'<?php
+// my_algo.php — 示例：去除 URL 中所有的广告查询参数
+class MyCustomAlgo extends AbstractAlgorithm {
+    public $id = \'my_custom_algo\';
+    public $priority = 20;          // 数值越大越先执行
+    public $enabled = true;
+    public $scope = \'url\';        // url / m3u8 / all
+    public $matchPatterns = [];
+
+    public function name() { return \'我的专属 URL 清理\'; }
+    public function description() { return \'清理 URL 中的广告查询参数\'; }
+
+    public function apply($input, $context = []) {
+        // 去除含 ad/track/promo 等关键词的查询参数
+        $parts = explode(\'?\', $input, 2);
+        if (count($parts) < 2) return $input;
+        parse_str($parts[1], $qs);
+        foreach ($qs as $k => $v) {
+            if (preg_match(\'/ad|track|promo|utm/i\', $k)) unset($qs[$k]);
+        }
+        $newQuery = http_build_query($qs);
+        return $parts[0] . ($newQuery ? \'?\' . $newQuery : \'\');
+    }
+}'
+); ?></pre>
+        </div>
     </div>
 
     <?php
@@ -1045,6 +1120,137 @@ function resetSiteForm(){
     document.getElementById('siteForm').reset();
     document.getElementById('siteIdInput').value = 0;
 }
+
+// ======== 自定义算法管理（调用 noad_proxy.php?mode=algorithms）========
+var ALGO_PROXY = 'noad_proxy.php?mode=algorithms';
+
+function loadAlgorithms(){
+    document.getElementById('algoStatus').textContent = '⏳ 加载中...';
+    var tbody = document.querySelector('#algoTable tbody');
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#888;">加载中...</td></tr>';
+    fetch(ALGO_PROXY + '&a=list')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (!data || data.code !== 200) {
+                tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#e53935;">加载失败: ' + (data.msg || '未知') + '</td></tr>';
+                document.getElementById('algoStatus').textContent = '❌ 加载失败';
+                return;
+            }
+            renderAlgoTable(data.algorithms || []);
+            document.getElementById('algoStatus').textContent = '✅ 已加载';
+        })
+        .catch(function(){
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#e53935;">加载失败，请确认 noad_proxy.php 可访问</td></tr>';
+            document.getElementById('algoStatus').textContent = '❌ 网络错误';
+        });
+}
+
+function renderAlgoTable(list){
+    var tbody = document.querySelector('#algoTable tbody');
+    var total = list.length;
+    var enabled = 0;
+    if (total === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#888;">未发现算法。请把 PHP 文件放到 /algorithms/ 目录，算法类需继承 AbstractAlgorithm。</td></tr>';
+    } else {
+        var html = '';
+        list.forEach(function(a){
+            if (a.enabled) enabled++;
+            html += '<tr>'
+                + '<td style="font-family:monospace;">' + (a.id || '(未设置)') + '</td>'
+                + '<td><strong>' + (a.name || '-') + '</strong></td>'
+                + '<td style="color:#666; font-size:12px;">' + (a.description || '-') + '</td>'
+                + '<td>' + (a.author || '-') + '</td>'
+                + '<td>' + (a.version || '-') + '</td>'
+                + '<td>' + (a.scope || 'all') + '</td>'
+                + '<td>' + (a.priority ?? '-') + '</td>'
+                + '<td>' + (a.elapsed_ms ?? '-') + ' ms</td>'
+                + '<td>' + (a.hits ?? 0) + '</td>'
+                + '<td>' + (a.enabled ? '<span class="badge badge-green">启用</span>' : '<span class="badge badge-yellow">禁用</span>') + '</td>'
+                + '<td><button type="button" class="btn-primary-sm" onclick="toggleAlgorithm(\'' + a.id + '\',' + (a.enabled ? 'false' : 'true') + ')">' + (a.enabled ? '禁用' : '启用') + '</button></td>'
+                + '</tr>';
+        });
+        tbody.innerHTML = html;
+    }
+    document.getElementById('algoTotal').textContent = total;
+    document.getElementById('algoEnabled').textContent = enabled;
+}
+
+function toggleAlgorithm(id, enabled){
+    var form = new FormData();
+    form.append('action', 'ajax_toggle_algo');
+    form.append('algo_id', id);
+    form.append('enabled', enabled ? 1 : 0);
+
+    // 优先走 admin.php 内置 action（下文实现），失败则退回 proxy
+    fetch(window.location.href, { method: 'POST', body: form })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (data && data.code === 200) {
+                loadAlgorithms();
+                return;
+            }
+            // 走 proxy 回退
+            return fetch(ALGO_PROXY + '&a=toggle&id=' + encodeURIComponent(id) + '&enabled=' + (enabled ? 1 : 0))
+                .then(function(r){ return r.json(); })
+                .then(function(){ loadAlgorithms(); });
+        })
+        .catch(function(){
+            fetch(ALGO_PROXY + '&a=toggle&id=' + encodeURIComponent(id) + '&enabled=' + (enabled ? 1 : 0))
+                .then(function(r){ return r.json(); })
+                .then(function(){ loadAlgorithms(); });
+        });
+}
+
+function reloadAlgorithms(){
+    var form = new FormData();
+    form.append('action', 'ajax_reload_algorithms');
+    fetch(window.location.href, { method: 'POST', body: form })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (data && data.code === 200) {
+                loadAlgorithms();
+                return;
+            }
+            fetch(ALGO_PROXY + '&a=reload')
+                .then(function(r){ return r.json(); })
+                .then(function(){ loadAlgorithms(); });
+        });
+}
+
+function testAlgorithms(){
+    var input = document.getElementById('algoTestInput').value;
+    var scope = document.getElementById('algoTestScope').value;
+    var resultEl = document.getElementById('algoTestResult');
+    resultEl.textContent = '⏳ 测试中...';
+
+    var form = new FormData();
+    form.append('action', 'ajax_test_algorithms');
+    form.append('input', input);
+    form.append('scope', scope);
+
+    fetch(window.location.href, { method: 'POST', body: form })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (data && data.code === 200) {
+                resultEl.textContent = '【原始】' + (data.original || '') + '\n\n【处理后】' + (data.result || '') + '\n\n【应用的算法】\n' + JSON.stringify(data.applied || [], null, 2) + '\n\n【是否变更】 ' + (data.changed ? '是' : '否');
+                return;
+            }
+            // 回退 proxy
+            return fetch(ALGO_PROXY + '&a=test&input=' + encodeURIComponent(input) + '&scope=' + encodeURIComponent(scope))
+                .then(function(r){ return r.json(); })
+                .then(function(d){
+                    resultEl.textContent = '【原始】' + (d.original || '') + '\n\n【处理后】' + (d.result || '') + '\n\n【应用的算法】\n' + JSON.stringify(d.applied || [], null, 2) + '\n\n【是否变更】 ' + (d.changed ? '是' : '否');
+                });
+        })
+        .catch(function(){
+            resultEl.textContent = '❌ 请求失败，请确认 noad_proxy.php 可访问';
+        });
+}
+
+// 页面加载后自动加载一次算法列表（若用户打开该 Tab 时也触发）
+document.querySelector('#tabsNav button[data-tab="custom_algorithms"]').addEventListener('click', function(){
+    loadAlgorithms();
+});
 </script>
 </body>
 </html>

@@ -1,14 +1,39 @@
-# Runtime cache
+# ===== 运行时缓存 / 临时产物 =====
 cache/*.php
 cache/*.json
-cache/noad.db
 cache/*.db
+cache/*.db-*
+cache/*.db-shm
+cache/*.db-wal
 cache/*_backup.json
-!cache/.keep
+!cache/.gitkeep
 
-# Editor / OS
+# ===== 大体积打包产物（避免提交二进制）=====
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.exe
+*.dll
+*.so
+
+# ===== 备份目录（仅保留必要的说明文件）=====
+backup/*/
+!backup/.gitkeep
+
+# ===== 编辑器 / 操作系统 =====
 .DS_Store
 .idea/
 .vscode/
 *.log
 Thumbs.db
+
+# ===== PHP / Composer 可选 =====
+/vendor/
+composer.lock
+
+# ===== 测试 / 调试临时文件 =====
+test_playlist.m3u8
+*.tmp
+*.temp
