@@ -813,6 +813,14 @@ class NoAdParser {
     // ========== 工具方法 ==========
 
     private function fetchUrl($url, $timeout = 10) {
+        // 本地文件：走 file_get_contents（curl 的 file:// 常被安全配置禁用）
+        if (strncmp($url, 'file://', 7) === 0) {
+            $path = substr($url, 7);
+            if (is_file($path) && is_readable($path)) {
+                return @file_get_contents($path);
+            }
+            return false;
+        }
         if (!function_exists('curl_init')) return false;
         $ch = curl_init($url);
         curl_setopt_array($ch, array(

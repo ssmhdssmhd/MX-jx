@@ -94,6 +94,89 @@ function writePhpFile($file, $content) {
     return rename($tmp, $file);
 }
 
+// --- 提前放行 AJAX 接口（无需登录即可返回 JSON） ---
+$ajaxEarlyAction = $_POST['action'] ?? $_GET['action'] ?? '';
+$ajaxEarlyWhitelist = array(
+    'ajax_parse_m3u8', 'ajax_get_sites',
+    'ajax_list_algorithms', 'ajax_toggle_algo',
+    'ajax_reload_algorithms', 'ajax_test_algorithms',
+);
+if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
+    header('Content-Type: application/json; charset=utf-8');
+    require_once __DIR__ . '/core/Database.php';
+    require_once __DIR__ . '/core/NoAdParser.php';
+    $db = null;
+    if (!empty($noadConfig['noad_enabled']) && !empty($noadConfig['stats_enabled']) && extension_loaded('pdo_sqlite')) {
+        try { $db = Database::getInstance($noadConfig['sqlite_path']); } catch (Exception $e) { $db = null; }
+    }
+    // --- v4.1 AJAX: M3U8 解析 ---
+    if ($ajaxEarlyAction === 'ajax_parse_m3u8') {
+        $url = trim($_POST['m3u8_url'] ?? '');
+        $siteId = (int)($_POST['site_id'] ?? 0);
+        $siteName = '';
+        if ($siteId > 0 && $db) {
+            $s = $db->getSiteById($siteId);
+            if (!empty($s)) $siteName = $s['name'] . (!empty($s['short_code']) ? '(' . $s['short_code'] . ')' : '');
+        }
+        if ($url === '') { echo json_encode(array('code' => 400, 'msg' => 'URL 不能为空'), JSON_UNESCAPED_UNICODE); exit; }
+        $parser = new NoAdParser();
+        $result = $parser->fetchAndAnalyze($url, 20);
+        if ($result === null) { echo json_encode(array('code' => 500, 'msg' => '无法获取或解析该 M3U8 链接'), JSON_UNESCAPED_UNICODE); exit; }
+        if ($db) { try { $db->logM3u8Parse($siteId, $siteName, $url, $result['total'], $result['ad_count'], $result['keep_count'], $result['total_duration'], $result['ad_duration']); } catch (Exception $e) {} }
+        $liteSegs = array(); $totalRules = 0;
+        foreach ($result['segments'] as $seg) {
+            $liteSegs[] = array(
+                'idx' => $seg['idx'], 'duration' => $seg['duration'], 'uri' => $seg['uri'],
+                'is_ad' => $seg['is_ad'], 'reason' => $seg['reason'],
+                'time_start' => $parser->formatTime($seg['time_start']),
+                'time_end' => $parser->formatTime($seg['time_end']),
+            );
+            if ($seg['is_ad']) $totalRules++;
+        }
+        echo json_encode(array(
+            'code' => 200, 'msg' => 'ok', 'total' => $result['total'],
+            'ad_count' => $result['ad_count'], 'keep_count' => $result['keep_count'],
+            'total_duration' => $parser->formatTime($result['total_duration']),
+            'ad_duration' => $parser->formatTime($result['ad_duration']),
+            'keep_duration' => $parser->formatTime($result['keep_duration']),
+            'site_name' => $siteName, 'rules' => max(1, $totalRules),
+            'raw_content' => $result['raw_content'], 'clean_m3u8' => $result['clean_m3u8'],
+            'segments' => $liteSegs,
+        ), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    // --- v4.1 AJAX: 获取资源站点下拉列表 ---
+    if ($ajaxEarlyAction === 'ajax_get_sites') {
+        $sites = $db ? $db->getSites(true) : array();
+        echo json_encode(array('code' => 200, 'sites' => $sites), JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    // --- v4.2 AJAX: 自定义算法 list/toggle/reload/test ---
+    $parser = new NoAdParser();
+    if ($ajaxEarlyAction === 'ajax_list_algorithms') {
+        echo json_encode(array('code' => 200, 'algorithms' => $parser->listCustomAlgorithms()), JSON_UNESCAPED_UNICODE);
+    } elseif ($ajaxEarlyAction === 'ajax_toggle_algo') {
+        $id = trim($_POST['algo_id'] ?? '');
+        $enabled = (int)($_POST['enabled'] ?? 1);
+        if ($id === '') { echo json_encode(array('code' => 400, 'msg' => '缺少 id'), JSON_UNESCAPED_UNICODE); exit; }
+        $parser->setCustomAlgorithmEnabled($id, (bool)$enabled);
+        echo json_encode(array('code' => 200, 'id' => $id, 'enabled' => (bool)$enabled), JSON_UNESCAPED_UNICODE);
+    } elseif ($ajaxEarlyAction === 'ajax_reload_algorithms') {
+        echo json_encode(array('code' => 200, 'algorithms' => $parser->reloadCustomAlgorithms()), JSON_UNESCAPED_UNICODE);
+    } elseif ($ajaxEarlyAction === 'ajax_test_algorithms') {
+        $input = $_POST['input'] ?? '';
+        $scope = $_POST['scope'] ?? 'all';
+        $result = $parser->applyCustomAlgorithms($input, $scope, array('original_url' => $input));
+        echo json_encode(array(
+            'code' => 200, 'original' => $input,
+            'result' => $result['data'] ?? $input,
+            'applied' => $result['applied'] ?? array(),
+            'changed' => ($result['data'] ?? $input) !== $input,
+        ), JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
 if (!$isLoggedIn) {
     ?><!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
     <title>登录 - 沫兮万能解析后台 v4.0.0</title>
