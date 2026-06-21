@@ -2,7 +2,7 @@
 
 # 🎬 沫兮万能解析
 
-**PHP 智能线路切换系统 · NoAd 去广告 v4.0.0**
+**PHP 智能线路切换系统 · NoAd 去广告 v4.2.0**
 
 > 多线路并发请求 · 智能选优 · M3U8 直链检测 · 全平台视频解析 · 可视化后台管理 · M3U8 广告片段智能过滤
 
@@ -44,8 +44,9 @@
 
 ### 环境要求
 
-- **PHP** >= 7.4（支持 `??` 运算符）
+- **PHP** >= 7.4（兼容 7.4 ~ 8.5（推荐 8.0+）
 - **cURL** 扩展（`curl_multi` 支持，核心依赖，必须启用）
+- **pdo_sqlite** 扩展（可选，用于 NoAd 数据统计；未启用时核心解析照常工作）
 - Web 服务器（Nginx / Apache 均可）
 
 > 🔍 **如何确认环境？** 新建 `phpinfo.php` 写入 `<?php phpinfo(); ?>`，访问后搜索 `curl`，看到 `enabled` 即为通过。详细步骤见 **[INSTALL.md](INSTALL.md#1%EF%B8%8F%E2%83%A3%E7%8E%AF%E5%A2%83%E8%A6%81%E6%B1%82)**
@@ -92,57 +93,72 @@ https://你的域名/index.php?url=https://www.douyin.com/video/xxx
 ```
 MX-jx/
 ├── index.php                  # 🎯 主入口文件（解析接口）
+├── noad_proxy.php             # 🔌 NoAd 代理（M3U8 清洗 / TS 跨域 / 自定义算法 API）
 ├── admin.php                  # 🔐 后台管理入口（密码登录）
-├── admin_main.php             # 📊 后台页面模板（9 个功能页）
+├── admin_tpl.php              # 📊 后台页面模板（12+ 个功能 Tab）
+├── admin_main.php             # 后台旧版模板（保留作参考）
 ├── admin_style.css            # 🎨 后台页面样式
 ├── README.md                  # 📖 项目说明文档
-├── INSTALL.md                 # 🚀 新手安装指南（推荐阅读）
+├── INSTALL.md                 # 🚀 新手安装指南
 ├── disclaimer.php             # 📝 免责声明类
-├── ZJK.txt                    # ⚙️ 自定义接口配置
+├── ZJK.txt                    # ⚙️ 自定义接口配置（每行一条）
 │
 ├── config/                    # 📂 配置层
-│   ├── api.php                # API 线路配置（13主 + 2备）
-│   ├── platform.php           # 平台规则配置（17个视频平台）
-│   ├── switch.php             # 系统开关配置
-│   └── admin.php              # 后台配置（密码/端口/权限等）
+│   ├── api.php                # API 线路配置（多条主 + 备）
+│   ├── platform.php           # 平台规则配置（视频平台匹配）
+│   ├── switch.php             # 系统开关配置（总接口 / 缓存 / M3U8 直链等）
+│   ├── admin.php              # 后台配置（密码 / 端口 / 权限等）
+│   └── noad.php               # NoAd 去广告配置（关键词 / 资源站 / 自定义算法）
 │
 ├── core/                      # 📂 核心层
 │   ├── strategy.php           # 🧠 Strategy - 智能选择策略
 │   ├── requester.php          # 🌐 Requester - 并发请求引擎
-│   └── cache.php              # 💾 SmartCache - 文件缓存
+│   ├── cache.php              # 💾 SmartCache - 文件缓存
+│   ├── Database.php           # 🗄️ SQLite 持久层（解析源 / 规则 / 统计 / 日志）
+│   └── NoAdParser.php         # ✂️ M3U8 去广告 + 资源站清理 + 自定义算法入口
 │
 ├── handlers/                  # 📂 处理器层
 │   └── M3U8Handler.php        # 🎬 M3U8 直链检测与响应
 │
-├── html/                      # 📂 前端页面（v4.1.0 新增）
-│   ├── index.html             # 🏠 首页 / 演示页（输入视频链接进行解析）
-│   ├── player.html            # ▶️ M3U8 播放器（HLS.js 播放解析后的视频）
-│   ├── api-test.html          # 🧪 API 调试页（查看原始响应 / JSON 字段）
-│   └── m3u8-test.html         # 📺 M3U8 测试页（内置公开测试流）
+├── algorithms/                # 📂 自定义算法扩展（v4.2 新增）
+│   ├── AbstractAlgorithm.php  # 算法基类（优先级 / 作用域 / 匹配规则）
+│   ├── AlgorithmRegistry.php  # 算法注册表（自动扫描 / 排序 / 应用）
+│   ├── example_01_url_tracker_strip.php  # 示例：URL 跟踪参数清洗
+│   ├── example_02_ad_keyword_filter.php  # 示例：广告关键词过滤
+│   ├── example_03_domain_rewrite.php     # 示例：广告域名重写
+│   ├── example_04_m3u8_segment_cleaner.php # 示例：M3U8 片段级清洗
+│   ├── example_05_protocol_normalize.php # 示例：协议 / 路径规范化
+│   └── custom_template.php    # 用户自定义算法模板
 │
-├── docs/                      # 📂 文档目录（v4.1.0 新增）
+├── html/                      # 📂 前端页面
+│   ├── index.html             # 🏠 首页 / 演示页
+│   ├── player.html            # ▶️ M3U8 播放器（HLS.js）
+│   ├── api-test.html          # 🧪 API 调试页
+│   └── m3u8-test.html         # 📺 M3U8 测试页
+│
+├── docs/                      # 📂 文档目录
 │   ├── 配置说明.md            # 配置文件详细说明
 │   ├── 核心说明.md            # 核心模块设计说明
 │   └── M3U8处理器规则.md      # M3U8 处理器规则说明
 │
-├── cache/                     # 📂 缓存目录（运行时自动生成）
+├── cache/                     # 📂 缓存目录（运行时自动生成，默认不提交）
 │   └── .gitkeep               # 空目录占位
 │
-└── backup/                    # 📂 历史备份（归档压缩包）
-    └── *.zip                  # 各版本代码备份
+└── backup/                    # 📂 后台「一键备份」输出目录（默认不提交）
+    └── .gitkeep               # 空目录占位
 ```
 
-### 📊 项目文件统计（v4.1.0）
+### 📊 项目文件统计（v4.2.0）
 
 | 类型 | 数量 | 说明 |
 |------|------|------|
-| **PHP 文件** | 10 个 | 入口 2 个 + 配置 4 个 + 核心 3 个 + 处理器 1 个 |
-| **HTML 页面** | 4 个 | 首页 / 播放器 / API调试 / M3U8测试 |
+| **PHP 文件** | ~20 个 | 入口 2 个 + 后台 3 个 + 配置 5 个 + 核心 5 个 + 处理器 1 个 + 算法 7 个 |
+| **HTML 页面** | 4 个 | 首页 / 播放器 / API 调试 / M3U8 测试 |
 | **CSS 文件** | 1 个 | 后台管理页面样式 |
 | **文本文档** | 6 个 | README、INSTALL、ZJK.txt、docs/ 3 个说明 |
-| **总文件数** | ~21 个 | |
+| **总文件数** | ~30 个 | |
 
-### 核心类/文件说明
+### 核心类 / 文件说明
 
 | 文件 | 类型 | 职责 |
 |------|------|------|
@@ -161,13 +177,30 @@ MX-jx/
 | `admin 配置` | [config/admin.php](config/admin.php) | 后台配置：密码哈希 / 端口限制 / IP 白名单 / 会话时长 |
 | `noad_proxy.php` | [noad_proxy.php](noad_proxy.php) | NoAd 代理入口：M3U8 清洗代理 / TS 跨域代理 / JSON API |
 
-### NoAd 去广告核心（v4.0.0 新增）
+### NoAd 去广告核心（v4.0.0 新增 / v4.2.0 扩展）
 
 | 文件 | 类型 | 职责 |
 |------|------|------|
-| `NoAdParser` | [core/NoAdParser.php](core/NoAdParser.php) | M3U8 广告片段识别过滤 / 多源并发匹配 / 缓存加速 |
+| `NoAdParser` | [core/NoAdParser.php](core/NoAdParser.php) | M3U8 广告片段识别过滤 / 多源并发匹配 / 资源站清洗 / 自定义算法入口 |
 | `Database` | [core/Database.php](core/Database.php) | SQLite 轻量持久层：解析源 / 广告规则 / 访问统计 / 日志 |
-| `NoAd 配置` | [config/noad.php](config/noad.php) | 去广告系统参数：阈值 / 超时 / 资源类型 / 默认规则 |
+| `NoAd 配置` | [config/noad.php](config/noad.php) | 去广告系统参数：关键词 / 资源类型 / 资源站 / 自定义算法开关 |
+
+### 自定义算法扩展体系（v4.2.0 新增）
+
+| 文件 | 类型 | 职责 |
+|------|------|------|
+| `AbstractAlgorithm` | [algorithms/AbstractAlgorithm.php](algorithms/AbstractAlgorithm.php) | 算法基类：统一 `name()` / `apply()` / `shouldRun()` / 优先级 / 作用域 / 匹配规则 |
+| `AlgorithmRegistry` | [algorithms/AlgorithmRegistry.php](algorithms/AlgorithmRegistry.php) | 注册表：自动扫描 `algorithms/*.php`，按优先级排序，按作用域应用 |
+| `示例算法` | [algorithms/example_01 ... example_05](algorithms/) | URL 跟踪清洗、广告关键词过滤、域名重写、M3U8 片段清洗、协议规范化 |
+| `开发模板` | [algorithms/custom_template.php](algorithms/custom_template.php) | 用户可复制、改名、修改实现自己的算法 |
+
+**设计要点（便于二次开发）：**
+
+- 所有算法类继承 `AbstractAlgorithm`，实现 `apply($input, $context)` 即可
+- 每个算法可设置 `priority`（数值越大越先执行）
+- `scope` 可取值 `url` / `m3u8` / `all`，由 `NoAdParser` 在不同阶段调用
+- `matchPatterns` 可设置数组关键词；命中 URL 中任一关键字才执行（空数组 = 总是执行）
+- 通过 `noad_proxy.php?mode=algorithms&a=list|toggle|reload|test` 即可管理或测试
 
 ### 前端页面（v4.1.0 新增）
 
@@ -206,21 +239,23 @@ MX-jx/
 2. ⚙️ 进入「后台设置」修改访问路径（如改为 `dashboard.php`）
 3. 🔌 进入「API 线路」确认或添加解析接口
 4. 🧪 进入「接口测试」验证所有接口连通性
-5. 📦 进入「备份日志」创建首次配置备份
+5. 🧩 进入「自定义算法」了解并启用/禁用算法
+6. 💾 进入「备份日志」创建首次配置备份
 
-### 🎯 后台功能一览
+### 🎯 后台功能一览（v4.2.0）
 
 | 模块 | 功能说明 |
 |------|----------|
-| 📊 **仪表盘** | PHP版本/cURL状态/API数量/文件权限 快速检查 |
-| 🔌 **API 线路** | 增删改查所有解析接口，可视化编辑无需改代码 |
-| 📺 **平台规则** | 为特定视频平台指定优先的解析接口 |
-| 🎛️ **系统开关** | 总接口模式/超时时间/M3U8直链检测 等开关 |
-| 📝 **自定义接口** | 在线编辑 ZJK.txt 文件 |
-| 🧪 **接口测试** | 并发测试所有接口对指定视频链接的解析效果 |
-| 💾 **备份日志** | 一键备份所有配置 + 查看管理员操作日志 |
-| 🔐 **修改密码** | 修改管理员登录密码（MD5 加密存储） |
-| ⚙️ **后台设置** | 访问路径修改、端口限制、IP白名单、会话时长等高级配置 |
+| 📊 **总览 / 仪表盘** | PHP 版本 / cURL 状态 / API 数量 / 近 7 天访问柱图 / 热门源 |
+| 📈 **NoAd 数据统计** | 解析请求数 / 广告片段移除数 / 缓存命中率 / 访问日志实时浏览 |
+| 🔌 **去广告解析源** | 可视化添加 / 启用 / 禁用 / 编辑 NoAd 解析接口；可设置匹配平台 |
+| 🚫 **广告规则库** | 管理自定义广告关键词（按匹配优先级、启用状态、命中次数排序） |
+| ⚙️ **NoAd 设置** | 缓存有效期、超时、并发上限、关键词阈值、资源站清理开关等 |
+| 🧩 **自定义算法** | 列表、启用 / 禁用、重新扫描、本地测试、开发示例与算法模板 |
+| 📺 **M3U8 解析** | 输入远程 M3U8 URL，自动解析片段、标记广告、对比清洗前后结果 |
+| 🎬 **资源站点** | 管理 dytt / 西瓜 / 如意 / 爱奇艺 / 腾讯视频 / 优酷 / 芒果 TV 等资源站规则 |
+| 📄 **解析日志** | 记录每次手动 M3U8 解析的时间 / 站点 / 片段数，便于排错 |
+| 🔌 **API 线路** / 🎯 **平台规则** / 🎛️ **系统开关** / 📝 **自定义接口** / 🧪 **接口测试** / 💾 **备份日志** / 🔐 **修改密码** / ⚙️ **后台设置** | （沿用 v3.1 版本，略） |
 
 ### 🔒 安全特性
 
@@ -455,6 +490,27 @@ https://jx2.example.com/?url=|8
 
 ## 📝 更新日志
 
+### v4.2.0 (2026-06-21) — 自定义算法扩展 + 项目结构整理
+
+- ✨ **`algorithms/` 目录体系**：新增 `AbstractAlgorithm` 基类 + `AlgorithmRegistry` 注册表，所有算法自动扫描加载，按优先级排序，按作用域应用
+- ✨ **5 个内置示例算法**：URL 跟踪参数清洗、广告关键词过滤、域名重写、M3U8 片段级清洗、协议规范化
+- ✨ **用户自定义算法模板**：`algorithms/custom_template.php` 可复制、改名，快速编写专属过滤规则
+- ✨ **`noad_proxy.php` 新增 `mode=algorithms`**：提供 `list` / `toggle` / `reload` / `test` 四个 JSON API，便于后台管理或被第三方系统调用
+- ✨ **后台新增「🧩 自定义算法」Tab**：列表展示算法信息 / 一键启用禁用 / 重新扫描目录 / 本地测试算法链 / 附开发示例代码
+- ✨ **`NoAdParser::listCustomAlgorithms()` / `setCustomAlgorithmEnabled()` / `applyCustomAlgorithms()` / `reloadCustomAlgorithms()`**：供 PHP 内部或 AJAX 直接调用
+- ⚙️ **`config/noad.php` 新增 `enable_custom_algorithms` + `custom_algorithms_scope`**
+- 🧹 **项目结构整理**：剔除历史版本 `.zip`、旧版备份目录、临时 `test_playlist.m3u8`、`cache/*.db` 等大体积/运行时文件；完善 `.gitignore`，仅保留 `backup/.gitkeep` 与 `cache/.gitkeep`
+- 📖 **README 与项目结构说明** 更新到 v4.2.0，反映最新文件分层
+
+### v4.1.0 (2026-06-20) — M3U8 解析页 + 资源站去广告
+
+- ✨ **M3U8 解析页（双栏对比）**：输入远程 M3U8 URL，左侧展示原始内容，右侧展示清洗后的内容，包含时间戳 / 片段时长 / 广告标记信息
+- ✨ **资源站去广告**：针对 dytt（电影天堂）、西瓜、如意、爱奇艺、腾讯视频、优酷、芒果 TV 等常见资源站域名，内置专门清理算法（suanfa1~9 系列）
+- ✨ **`NoAdParser::cleanByResourceSite()`**：根据 URL 自动识别资源站，应用对应算法，并返回 `matched_site` / `algorithms_applied` / `ad_tokens_removed` 供前端展示
+- ✨ **`admin_tpl.php` 新增 Tab**：M3U8 解析 / 资源站点 / 解析日志 / 缓存管理
+- ✨ **`admin.php` 新增 AJAX 接口**：`ajax_parse_m3u8` / `ajax_get_sites`，供后台动态调用
+- 🧪 **`html/m3u8-test.html` / `player.html` / `api-test.html`**：内置公开测试流，方便快速验证
+
 ### v4.0.0 (2026-06-19) — 重大版本：NoAd 去广告解析系统
 
 - ✨ **M3U8 广告片段智能过滤**：自动识别 `#EXTINF` 片段中的广告关键词（中文「片头广告 / 片中广告 / 片尾广告 / 推广」+ 英文 `ad/advert/promo/tracker` 等），自动从播放列表中剔除
@@ -507,8 +563,8 @@ https://jx2.example.com/?url=|8
 |------|------|
 | **开发者** | MX-射手沫蝴蝶 |
 | **联系方式** | QQ: 2094332348 |
-| **当前版本** | v4.0.0（含 NoAd 去广告系统） |
-| **更新日期** | 2026-06-19 |
+| **当前版本** | v4.2.0（含 NoAd 去广告系统 + 自定义算法扩展） |
+| **更新日期** | 2026-06-21 |
 
 ---
 
