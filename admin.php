@@ -1,9 +1,29 @@
 <?php
 /**
- * 沫兮万能解析 - 管理后台（单文件集成版 v4.3）
+ * 沫兮万能解析 - 管理后台（单文件集成版 v4.4）
  * ------------------------------------------------------------
  * 原文件：admin.php + admin_tpl.php + admin_main.php + admin_style.css
  * 现全部整合到此文件中，便于部署与维护
+ *
+ * 功能模块：
+ *   1. 仪表盘（系统运行状态概览）
+ *   2. M3U8 解析（去广告分析）
+ *   3. 资源站点管理
+ *   4. 解析日志
+ *   5. 缓存管理
+ *   6. NoAd 数据统计
+ *   7. 解析源管理
+ *   8. 广告规则库
+ *   9. NoAd 系统设置
+ *  10. API 线路配置
+ *  11. 平台规则配置
+ *  12. 系统开关
+ *  13. ZJK 自定义接口
+ *  14. 接口在线测试
+ *  15. 自定义算法管理
+ *  16. 配置备份
+ *  17. 修改管理员密码
+ *  18. 后台设置（权限/路径/日志）
  *
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
@@ -121,7 +141,6 @@ function buildNoadConfig($c) {
             "    'enable_multi_source' => " . ($c['enable_multi_source'] ? 'true' : 'false') . ",\n" .
             "    'max_source_try' => " . (int)($c['max_source_try'] ?? 3) . ",\n" .
             "    'request_timeout' => " . (int)($c['request_timeout'] ?? 10) . ",\n" .
-            "    'concurrent_limit' => 8,\n" .
             "    'ad_keywords' => " . $kw . ",\n" .
             "    'whitelist_keywords' => " . $wl . ",\n" .
             "    'resource_types' => " . $rt . ",\n" .
@@ -509,6 +528,43 @@ foreach ($apiConfig as $name => $val) {
     $parsedApis[] = ['name' => $name, 'url' => rtrim($parts[0], '|'), 'timeout' => (int)($parts[1] ?? 5)];
 }
 
+// ========= 接口测试数据处理 =========
+$testResults = [];
+if ($page === 'test' && !empty($_GET['test_url']) && $curlOk) {
+    $testUrl = $_GET['test_url'];
+    $apiCount = 0;
+    $mh = curl_multi_init();
+    $handles = [];
+    foreach ($apiConfig as $name => $config) {
+        $apiCount++;
+        $parts = explode('|', $config);
+        $to = (int)($parts[1] ?? 5);
+        if (!empty($switchConfig['enable_global_api']) && $apiCount <= $switchConfig['global_api_count']) {
+            $to = $switchConfig['global_api_timeout'];
+        }
+        $reqUrl = str_replace('{url}', urlencode($testUrl), $parts[0]);
+        $ch = curl_init($reqUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $to);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_multi_add_handle($mh, $ch);
+        $handles[] = ['ch' => $ch, 'name' => $name];
+    }
+    $active = null;
+    do { curl_multi_exec($mh, $active); curl_multi_select($mh); } while ($active > 0);
+    foreach ($handles as $h) {
+        $resp = curl_multi_getcontent($h['ch']);
+        $code = curl_getinfo($h['ch'], CURLINFO_HTTP_CODE);
+        $time = curl_getinfo($h['ch'], CURLINFO_TOTAL_TIME);
+        $valid = ($resp && $code == 200);
+        curl_multi_remove_handle($mh, $h['ch']);
+        curl_close($h['ch']);
+        $testResults[] = ['name' => $h['name'], 'code' => $code, 'time' => $time, 'valid' => $valid];
+    }
+    curl_multi_close($mh);
+}
+
 // ========= 渲染登录页 =========
 function renderLoginPage($loginError = '') {
     global $currentScript;
@@ -525,7 +581,7 @@ function renderLoginPage($loginError = '') {
     <div class="login-box">
         <div class="login-icon">🎬</div>
         <h1>沫兮万能解析管理后台</h1>
-        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.3</div>
+        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.4</div>
         <?php if (!empty($loginError)): ?><div class="err"><?php echo htmlspecialchars($loginError); ?></div><?php endif; ?>
         <form method="post">
             <input type="hidden" name="action" value="login">
@@ -570,11 +626,12 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",Arial,sans-serif;
 .admin-header .sub{font-size:13px;opacity:0.9;margin-top:4px}
 .admin-header a{color:#fff;background:rgba(255,255,255,0.18);padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px}
 
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px}
+.badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:500}
 .badge-green{background:#d4edda;color:#155724}
 .badge-red{background:#f8d7da;color:#721c24}
 .badge-blue{background:#d1ecf1;color:#0c5460}
 .badge-yellow{background:#fff3cd;color:#856404}
+.badge-orange{background:#fff3e0;color:#ef6c00}
 
 .stat-card{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:20px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1)}
 .stat-card .num{font-size:32px;font-weight:700;margin:6px 0}
@@ -609,38 +666,74 @@ table.data-table th{background:#f5f5fa;padding:10px 12px;text-align:left;font-we
 table.data-table td{padding:10px 12px;border-bottom:1px solid #f0f0f5;vertical-align:top}
 table.data-table input[type="text"],table.data-table input[type="number"]{width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px}
 table.data-table input[type="text"]:focus,table.data-table input[type="number"]:focus{border-color:#667eea;outline:none}
+table.data-table .center{text-align:center}
 
 input[type="text"],input[type="number"],input[type="password"],select,textarea{padding:8px 12px;border:1px solid #d0d0d8;border-radius:6px;font-size:13px;background:#fff;outline:none;transition:border-color 0.2s}
 input[type="text"]:focus,input[type="number"]:focus,input[type="password"]:focus,select:focus,textarea:focus{border-color:#667eea}
 textarea{width:100%;min-height:200px;font-family:Consolas,Monaco,monospace;line-height:1.6}
 
-.btn-danger-sm{background:#dc3545;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin:2px}
-.btn-secondary-sm{background:#6c757d;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin:2px}
-.btn-primary-sm{background:#667eea;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin:2px}
-.btn-danger-sm:hover{background:#c82333}
+.btn-danger-sm{background:#dc3545;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin:2px}
+.btn-secondary-sm{background:#6c757d;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin:2px}
+.btn-primary-sm{background:#667eea;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin:2px}
+.btn-success-sm{background:#27ae60;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin:2px}
+.btn-danger-sm:hover{background:#c0392b}
 .btn-secondary-sm:hover{background:#5a6268}
 .btn-primary-sm:hover{background:#5568d3}
+.btn-success-sm:hover{background:#1e8449}
 
 .msg-box{padding:12px 18px;background:#d4edda;color:#155724;border-radius:8px;margin-bottom:16px;border:1px solid #a5d6a7}
 .msg-box.err{background:#fbe9e7;color:#c62828;border-color:#ef9a9a}
 
 code.monocode{background:#f5f5fa;padding:2px 8px;border-radius:4px;font-size:12px;font-family:Consolas,Monaco,monospace}
 
-.seg-row{padding:8px 12px;border-bottom:1px solid #f0f0f5;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.seg-row{padding:10px 12px;border-bottom:1px solid #f0f0f5;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .seg-row.ad{background:#ffebee;color:#b71c1c}
-.seg-row .seg-idx{font-weight:600;min-width:40px;color:#666}
+.seg-row .seg-idx{font-weight:600;min-width:50px;color:#666}
 .seg-row .seg-dur{min-width:80px;color:#888}
-.seg-row .seg-time{min-width:140px;color:#555}
+.seg-row .seg-time{min-width:160px;color:#555}
 .seg-row .seg-uri{flex:1;word-break:break-all;font-size:12px;color:#555;font-family:Consolas,monospace}
 .seg-row .seg-reason{color:#d32f2f;font-size:11px;min-width:120px}
 
 #parseStatus{color:#555;font-size:13px}
 .parse-stat-box{background:#fff;border-radius:10px;padding:12px;margin-top:10px;border:1px solid #e9ecef}
 
+/* 开关样式 */
+.switch{position:relative;display:inline-block;width:48px;height:26px}
+.switch input{display:none}
+.switch .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:#ccc;border-radius:26px;transition:.3s}
+.switch .slider:before{position:absolute;content:"";height:20px;width:20px;left:3px;bottom:3px;background-color:white;border-radius:50%;transition:.3s}
+.switch input:checked + .slider{background-color:#667eea}
+.switch input:checked + .slider:before{transform:translateX(22px)}
+
+.form-row{display:grid;grid-template-columns:220px 1fr;gap:20px;padding:14px 0;border-bottom:1px dashed #eee;align-items:center}
+.form-row:last-child{border-bottom:none}
+.form-row label{color:#555;font-size:14px}
+.form-row label small{display:block;font-size:12px;color:#999;margin-top:4px;line-height:1.6}
+.form-row input[type="text"],.form-row input[type="number"],.form-row input[type="password"]{width:100%;max-width:500px;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px}
+.form-row input:focus{border-color:#667eea;outline:none}
+
+.btn-row{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
+.btn-row.right{justify-content:flex-end}
+
+.card{background:white;border-radius:12px;padding:25px;box-shadow:0 2px 8px rgba(0,0,0,.05);margin-bottom:20px}
+.card h3{font-size:16px;color:#333;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid #eee}
+
+.log-area{background:#1e1e2e;color:#cdd6f4;padding:15px;border-radius:8px;font-family:Consolas,monospace;font-size:12px;line-height:1.8;max-height:500px;overflow-y:auto}
+.hint{background:#fff3e0;padding:15px;border-radius:8px;font-size:12px;color:#666;line-height:1.8;margin-top:15px}
+.hint code{background:#fff;padding:2px 6px;border-radius:3px}
+
+.info-box{background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.05);border-left:4px solid #667eea}
+.info-box.green{border-left-color:#27ae60}
+.info-box.orange{border-left-color:#f39c12}
+.info-box.red{border-left-color:#e74c3c}
+.info-box .label{font-size:12px;color:#999;margin-bottom:6px}
+.info-box .value{font-size:20px;font-weight:600;color:#333}
+
 @media(max-width:768px){
     .tabs-nav{overflow-x:auto;flex-wrap:nowrap}
     .grid-flow{grid-template-columns:1fr}
     .admin-header{flex-direction:column;align-items:flex-start}
+    .form-row{grid-template-columns:1fr;gap:8px}
 }
 </style>
     <?php
@@ -670,6 +763,7 @@ renderAdminPanel($page, $msg, $msgType, [
     'logLines' => $logLines,
     'currentScript' => $currentScript,
     'apiConfig' => $apiConfig,
+    'testResults' => $testResults,
 ]);
 
 function renderAdminPanel($page, $msg, $msgType, $d) {
@@ -680,7 +774,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>沫兮万能解析 - 管理后台 v4.3</title>
+<title>沫兮万能解析 - 管理后台 v4.4</title>
 <?php renderInlineStyles(); ?>
 </head>
 <body>
@@ -688,7 +782,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <header class="admin-header">
         <div>
             <h1>🎬 沫兮万能解析管理后台</h1>
-            <div class="sub">v4.3 · NoAd 去广告 + 智能线路切换（单文件版）</div>
+            <div class="sub">v4.4 · NoAd 去广告 + 智能线路切换（单文件版）</div>
         </div>
         <div style="display:flex;gap:12px;align-items:center;font-size:13px;flex-wrap:wrap">
             <span>NoAd <?php echo !empty($noadConfig['noad_enabled']) ? '<span class="badge badge-green">已启用</span>' : '<span class="badge badge-red">已关闭</span>'; ?></span>
@@ -702,7 +796,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php endif; ?>
 
     <div class="tabs-nav" id="tabsNav">
-        <button data-tab="dashboard" class="<?php echo $page==='dashboard'?'active':''; ?>">📊 总览</button>
+        <button data-tab="dashboard" class="<?php echo $page==='dashboard'?'active':''; ?>">📊 仪表盘</button>
         <button data-tab="m3u8_parse" class="<?php echo $page==='m3u8_parse'?'active':''; ?>">📼 M3U8 解析</button>
         <button data-tab="sites" class="<?php echo $page==='sites'?'active':''; ?>">🔗 资源站点</button>
         <button data-tab="parse_log" class="<?php echo $page==='parse_log'?'active':''; ?>">📄 解析日志</button>
@@ -715,6 +809,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         <button data-tab="platform" class="<?php echo $page==='platform'?'active':''; ?>">🎯 平台规则</button>
         <button data-tab="switch" class="<?php echo $page==='switch'?'active':''; ?>">🔀 系统开关</button>
         <button data-tab="zjk" class="<?php echo $page==='zjk'?'active':''; ?>">📝 自定义接口</button>
+        <button data-tab="test" class="<?php echo $page==='test'?'active':''; ?>">🧪 接口测试</button>
         <button data-tab="custom_algorithms" class="<?php echo $page==='custom_algorithms'?'active':''; ?>">🧩 算法</button>
         <button data-tab="backup" class="<?php echo $page==='backup'?'active':''; ?>">💾 备份</button>
         <button data-tab="password" class="<?php echo $page==='password'?'active':''; ?>">🔐 密码</button>
@@ -722,10 +817,10 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     </div>
 
     <?php
-    // ===== 1. 总览 =====
+    // ===== 1. 仪表盘 =====
     ?>
     <div class="tab-panel <?php echo $page==='dashboard'?'active':''; ?>" id="tab-dashboard">
-        <h2>📊 系统总览</h2>
+        <h2>📊 仪表盘</h2>
         <div class="grid-flow" style="margin-bottom:20px">
             <div class="stat-card"><div class="label">累计解析请求</div><div class="num"><?php echo number_format($overview['total_requests'] ?? 0); ?></div></div>
             <div class="stat-card v2"><div class="label">今日解析</div><div class="num"><?php echo number_format($overview['today_requests'] ?? 0); ?></div></div>
@@ -757,6 +852,14 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 </tbody>
             </table>
         </div>
+        <div class="panel">
+            <h3>📝 最近操作日志</h3>
+            <?php if (empty($logLines)): ?>
+                <p style="color:#888">暂无日志记录。</p>
+            <?php else: ?>
+                <div class="log-area"><?php foreach ($logLines as $line): echo htmlspecialchars($line) . '<br>'; endforeach; ?></div>
+            <?php endif; ?>
+        </div>
     </div>
 
     <?php
@@ -769,7 +872,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
             <div class="row-flex">
                 <input type="text" id="m3u8Url" placeholder="例如：https://example.com/video/playlist.m3u8" style="flex:1;min-width:300px">
                 <select id="siteId"><option value="0">关联站点（可选）</option></select>
-                <button type="button" class="btn-primary-sm" onclick="parseM3U8()" style="font-size:14px;padding:8px 18px">🔍 解析</button>
+                <button type="button" class="btn-primary-sm" onclick="parseM3u8()" style="font-size:14px;padding:8px 18px">🔍 解析</button>
                 <span id="parseStatus" style="color:#888;font-size:13px">等待解析...</span>
             </div>
             <div id="parseStats" style="margin-top:15px;display:none">
@@ -820,7 +923,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <p style="color:#888">暂无站点数据。</p>
             <?php else: ?>
             <table class="data-table">
-                <thead><tr><th>ID</th><th>名称</th><th>短码</th><th>地址</th><th>匹配</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>ID</th><th>名称</th><th>短码</th><th>地址</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody>
                 <?php foreach ($sites as $s): ?>
                 <tr>
@@ -828,12 +931,23 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <td><?php echo htmlspecialchars($s['name']); ?></td>
                     <td><?php echo htmlspecialchars($s['short_code'] ?? ''); ?></td>
                     <td style="font-size:12px;word-break:break-all;max-width:200px"><?php echo htmlspecialchars($s['base_url'] ?? ''); ?></td>
-                    <td style="font-size:12px"><?php echo htmlspecialchars($s['match_pattern'] ?? ''); ?></td>
                     <td><?php echo empty($s['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
                     <td style="white-space:nowrap">
                         <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
-                        <button type="button" class="btn-primary-sm" onclick="editSite(<?php echo (int)$s['id'].",'".htmlspecialchars(addslashes($s['name']))."','".htmlspecialchars(addslashes($s['short_code']??''))."','".htmlspecialchars(addslashes($s['base_url']??''))."','".htmlspecialchars(addslashes($s['match_pattern']??''))."','".htmlspecialchars(addslashes($s['algorithms']??''))."','".htmlspecialchars(addslashes($s['remark']??''))."',".(empty($s['enabled'])?'false':'true').")">✏️ 编辑</button>
-                        <form method="post" style="display:inline" onsubmit="return confirm('确认删除？')"><input type="hidden" name="action" value="delete_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-danger-sm">🗑️</button></form>
+                        <?php
+                        $siteData = [
+                            (int)$s['id'],
+                            htmlspecialchars($s['name'] ?? ''),
+                            htmlspecialchars($s['short_code'] ?? ''),
+                            htmlspecialchars($s['base_url'] ?? ''),
+                            htmlspecialchars($s['match_pattern'] ?? ''),
+                            htmlspecialchars($s['remark'] ?? ''),
+                            empty($s['enabled']) ? 'false' : 'true',
+                        ];
+                        $siteJson = json_encode($siteData, JSON_UNESCAPED_UNICODE);
+                        ?>
+                        <button type="button" class="btn-primary-sm" data-site='<?php echo $siteJson; ?>' onclick="var d=this.getAttribute('data-site');if(d){var a=JSON.parse(d);editSite(a[0],a[1],a[2],a[3],a[4],a[5],a[6]);}">✏️ 编辑</button>
+                        <form method="post" style="display:inline" onsubmit="return confirm('确认删除？');"><input type="hidden" name="action" value="delete_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-danger-sm">🗑️</button></form>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -853,7 +967,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <p style="color:#888">暂无解析记录。</p>
             <?php else: ?>
             <table class="data-table">
-                <thead><tr><th>ID</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th><th>操作</th></tr></thead>
+                <thead><tr><th>ID</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th></tr></thead>
                 <tbody>
                 <?php foreach ($parseLogs as $l): ?>
                 <tr>
@@ -862,7 +976,6 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <td><?php echo (int)($l['total_segments'] ?? 0); ?></td>
                     <td style="color:#dc3545"><?php echo (int)($l['ad_segments'] ?? 0); ?></td>
                     <td style="color:#28a745"><?php echo (int)($l['keep_segments'] ?? 0); ?></td>
-                    <td><a href="?page=m3u8_parse" class="btn-primary-sm">查看</a></td>
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -904,4 +1017,629 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <p style="color:#888">暂无数据。</p>
             <?php else:
                 $maxVal = 1;
-                foreach ($dailyStats as $d) if (($d['total_requests'] ?? 0
+                foreach ($dailyStats as $d2) if (($d2['total_requests'] ?? 0) > $maxVal) $maxVal = $d2['total_requests'];
+                foreach ($dailyStats as $d2):
+                    $pct = round((($d2['total_requests'] ?? 0) / $maxVal) * 100);
+                    $date = substr($d2['stat_date'] ?? '??', 5);
+            ?>
+            <div style="margin:12px 0">
+                <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                    <span><?php echo htmlspecialchars($date); ?></span>
+                    <span>共 <strong><?php echo (int)($d2['total_requests'] ?? 0); ?></strong> · 移除广告 <strong><?php echo (int)($d2['ad_removed_count'] ?? 0); ?></strong></span>
+                </div>
+                <div class="chart-bar"><div class="chart-fill" style="width:<?php echo $pct; ?>%;"></div></div>
+            </div>
+            <?php endforeach; endif; ?>
+        </div>
+
+        <div class="panel">
+            <h3>🏆 最热门解析源（Top 10）</h3>
+            <?php if (empty($topSources)): ?>
+                <p style="color:#888">暂无数据。</p>
+            <?php else:
+                $mTop = max(1, max(array_column($topSources, 'use_count')));
+                foreach ($topSources as $s):
+                    $pct = round($s['use_count'] / $mTop * 100);
+            ?>
+            <div style="margin:12px 0">
+                <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                    <span><?php echo htmlspecialchars($s['source_name']); ?></span>
+                    <span>被使用 <strong><?php echo (int)$s['use_count']; ?></strong> 次</span>
+                </div>
+                <div class="chart-bar"><div class="chart-fill" style="width:<?php echo $pct; ?>%;background:linear-gradient(90deg,#f093fb,#f5576c);"></div></div>
+            </div>
+            <?php endforeach; endif; ?>
+        </div>
+
+        <div class="panel">
+            <h3>📝 最近访问日志</h3>
+            <?php if (empty($recentLogs)): ?>
+                <p style="color:#888">暂无日志。</p>
+            <?php else: ?>
+            <table class="data-table">
+                <thead><tr><th>时间</th><th>IP</th><th>来源</th><th>类型</th><th>广告移除</th><th>耗时</th><th>缓存</th></tr></thead>
+                <tbody>
+                <?php foreach ($recentLogs as $log): ?>
+                <tr>
+                    <td><?php echo date('H:i:s', (int)$log['access_time']); ?></td>
+                    <td><?php echo htmlspecialchars($log['ip'] ?? ''); ?></td>
+                    <td><?php echo htmlspecialchars($log['source_name'] ?? ''); ?></td>
+                    <td><?php echo htmlspecialchars($log['video_type'] ?: '-'); ?></td>
+                    <td><?php echo (int)($log['ad_segments_removed'] ?? 0); ?></td>
+                    <td><?php echo number_format((float)($log['response_time'] ?? 0), 1); ?>ms</td>
+                    <td><?php echo !empty($log['is_from_cache']) ? '<span class="badge badge-green">命中</span>' : '<span class="badge badge-blue">未</span>'; ?></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <?php
+    // ===== 7. 解析源管理 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='noad_sources'?'active':''; ?>" id="tab-noad_sources">
+        <h2>🔌 去广告解析源</h2>
+        <div class="panel">
+            <h3>➕ 添加 / 编辑解析源</h3>
+            <form method="post" id="srcForm">
+                <input type="hidden" name="action" value="save_noad_source">
+                <input type="hidden" name="source_id" id="srcId" value="0">
+                <div class="grid-flow">
+                    <label>名称<br><input type="text" name="source_name" id="srcName" placeholder="例：主源A" required style="width:100%"></label>
+                    <label style="grid-column:span 2">接口地址（URL 中用 <code class="monocode">{url}</code> 作为播放页占位符）<br><input type="text" name="source_url" id="srcUrl" placeholder="https://jx.example.com/?url={url}" required style="width:100%"></label>
+                    <label>资源类型<br>
+                        <select name="source_type" id="srcType">
+                            <?php foreach ($resourceTypes as $tid => $t): ?>
+                                <option value="<?php echo (int)$tid; ?>"><?php echo htmlspecialchars($t['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <label>超时（秒）<br><input type="number" name="source_timeout" id="srcTimeout" value="8" min="1" max="60"></label>
+                    <label>排序<br><input type="number" name="source_order" id="srcOrder" value="0" min="0" max="9999"></label>
+                    <label style="grid-column:span 2">匹配关键词（可选）<br><input type="text" name="source_match" id="srcMatch" placeholder="例：v.qq.com" style="width:100%"></label>
+                    <label style="grid-column:span 2">备注<br><input type="text" name="source_remark" id="srcRemark" style="width:100%"></label>
+                    <label><input type="checkbox" name="source_enabled" id="srcEnabled" checked> 启用</label>
+                </div>
+                <div style="margin-top:12px">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存解析源</button>
+                    <button type="button" class="btn-secondary-sm" onclick="resetSourceForm()" style="font-size:14px;padding:8px 18px">🔄 重置</button>
+                </div>
+            </form>
+        </div>
+        <div class="panel">
+            <h3>📋 现有解析源（共 <?php echo count($noadSources); ?> 个）</h3>
+            <?php if (empty($noadSources)): ?>
+                <p style="color:#888">⚠️ 暂未添加任何解析源。</p>
+            <?php else: ?>
+            <table class="data-table">
+                <thead><tr><th>ID</th><th>名称</th><th>类型</th><th>接口地址</th><th>超时</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody>
+                <?php foreach ($noadSources as $s):
+                    $tn = $resourceTypes[(int)$s['type_id']]['name'] ?? '未分类';
+                ?>
+                <tr>
+                    <td><?php echo (int)$s['id']; ?></td>
+                    <td><?php echo htmlspecialchars($s['name']); ?></td>
+                    <td><?php echo htmlspecialchars($tn); ?></td>
+                    <td style="word-break:break-all;max-width:260px;font-size:12px"><?php echo htmlspecialchars($s['url']); ?></td>
+                    <td><?php echo (int)$s['timeout']; ?>s</td>
+                    <td><?php echo empty($s['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
+                    <td style="white-space:nowrap">
+                        <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_noad_source"><input type="hidden" name="source_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
+                        <?php
+                        $srcData = [
+                            (int)$s['id'], htmlspecialchars($s['name'] ?? ''),
+                            htmlspecialchars($s['url'] ?? ''), (int)$s['type_id'],
+                            (int)$s['timeout'], (int)$s['sort_order'],
+                            htmlspecialchars($s['match_rules'] ?? ''),
+                            htmlspecialchars($s['remark'] ?? ''),
+                        ];
+                        $srcJson = json_encode($srcData, JSON_UNESCAPED_UNICODE);
+                        ?>
+                        <button type="button" class="btn-primary-sm" data-src='<?php echo $srcJson; ?>' onclick="var d=this.getAttribute('data-src');if(d){var a=JSON.parse(d);editSource(a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7]);}">✏️ 编辑</button>
+                        <form method="post" style="display:inline" onsubmit="return confirm('确认删除解析源 #<?php echo (int)$s['id']; ?>？');"><input type="hidden" name="action" value="delete_noad_source"><input type="hidden" name="source_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-danger-sm">🗑️</button></form>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <?php
+    // ===== 8. 广告规则库 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='noad_rules'?'active':''; ?>" id="tab-noad_rules">
+        <h2>🚫 广告片段识别规则库</h2>
+        <p style="color:#666">当前阈值：命中 <strong><?php echo (int)($noadConfig['ad_keyword_threshold'] ?? 2); ?></strong> 条关键词的片段将被判定为广告。</p>
+        <div class="panel">
+            <h3>➕ 添加自定义规则</h3>
+            <form method="post" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <input type="hidden" name="action" value="add_ad_rule">
+                <input type="text" name="keyword" placeholder="例：ad_roll / promo / 片头广告" required style="flex:1;min-width:220px">
+                <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">➕ 添加规则</button>
+            </form>
+        </div>
+        <div class="panel">
+            <h3>📝 默认内置规则（来自 config/noad.php）</h3>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+                <?php foreach (($noadConfig['ad_keywords'] ?? []) as $kw): ?>
+                    <span class="badge badge-yellow" style="font-size:13px;padding:6px 12px"><?php echo htmlspecialchars($kw); ?></span>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <div class="panel">
+            <h3>🗃️ 自定义规则库（共 <?php echo count($adRules); ?> 条）</h3>
+            <?php if (empty($adRules)): ?>
+                <p style="color:#888">暂无自定义规则。</p>
+            <?php else: ?>
+            <table class="data-table">
+                <thead><tr><th>ID</th><th>关键词</th><th>命中次数</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody>
+                <?php foreach ($adRules as $r): ?>
+                <tr>
+                    <td><?php echo (int)$r['id']; ?></td>
+                    <td><code class="monocode"><?php echo htmlspecialchars($r['keyword']); ?></code></td>
+                    <td><?php echo (int)($r['hit_count'] ?? 0); ?></td>
+                    <td><?php echo empty($r['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
+                    <td>
+                        <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
+                        <form method="post" style="display:inline" onsubmit="return confirm('确认删除规则 #<?php echo (int)$r['id']; ?>？')"><input type="hidden" name="action" value="delete_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-danger-sm">删除</button></form>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <?php
+    // ===== 9. NoAd 系统设置 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='noad_config'?'active':''; ?>" id="tab-noad_config">
+        <h2>⚙️ NoAd 去广告系统设置</h2>
+        <form method="post">
+            <input type="hidden" name="action" value="save_noad_config">
+            <div class="panel">
+                <h3>总开关</h3>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="noad_enabled" <?php if (!empty($noadConfig['noad_enabled'])) echo 'checked'; ?>> ✅ 启用 NoAd 去广告解析</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_ad_filter" <?php if (!empty($noadConfig['enable_ad_filter'])) echo 'checked'; ?>> 🚫 启用 M3U8 广告片段智能过滤</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_multi_source" <?php if (!empty($noadConfig['enable_multi_source'])) echo 'checked'; ?>> 🔀 启用多源自动匹配</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="cache_enabled" <?php if (!empty($noadConfig['cache_enabled'])) echo 'checked'; ?>> 🧹 启用缓存加速</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="stats_enabled" <?php if (!empty($noadConfig['stats_enabled'])) echo 'checked'; ?>> 📈 启用访问数据统计（SQLite）</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="debug_mode" <?php if (!empty($noadConfig['debug_mode'])) echo 'checked'; ?>> 🐛 调试模式</label>
+            </div>
+            <div class="panel">
+                <h3>性能参数</h3>
+                <div class="grid-flow">
+                    <label>缓存有效期（秒）<br><input type="number" name="cache_ttl" value="<?php echo (int)($noadConfig['cache_ttl'] ?? 1800); ?>" min="60" max="86400" style="width:100%"></label>
+                    <label>单次最多尝试解析源数<br><input type="number" name="max_source_try" value="<?php echo (int)($noadConfig['max_source_try'] ?? 3); ?>" min="1" max="20" style="width:100%"></label>
+                    <label>单源请求超时（秒）<br><input type="number" name="request_timeout" value="<?php echo (int)($noadConfig['request_timeout'] ?? 10); ?>" min="1" max="120" style="width:100%"></label>
+                    <label>广告关键词命中阈值<br><input type="number" name="ad_keyword_threshold" value="<?php echo (int)($noadConfig['ad_keyword_threshold'] ?? 2); ?>" min="1" max="20" style="width:100%"></label>
+                </div>
+            </div>
+            <div style="margin-top:16px">
+                <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存 NoAd 配置</button>
+            </div>
+        </form>
+    </div>
+
+    <?php
+    // ===== 10. API 线路配置 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='api'?'active':''; ?>" id="tab-api">
+        <h2>📡 API 线路配置</h2>
+        <div class="panel">
+            <form method="post">
+                <input type="hidden" name="action" value="save_api">
+                <table class="data-table" id="apiTable">
+                    <thead><tr><th>序号</th><th>接口名称</th><th>接口地址</th><th style="width:120px">超时(秒)</th><th style="width:100px">操作</th></tr></thead>
+                    <tbody id="apiTbody">
+                    <?php foreach ($parsedApis as $idx => $api): ?>
+                    <tr>
+                        <td style="color:#999;text-align:center"><?php echo $idx + 1; ?></td>
+                        <td><input type="text" name="api_name[]" value="<?php echo htmlspecialchars($api['name']); ?>" style="width:100%"></td>
+                        <td><input type="text" name="api_url[]" value="<?php echo htmlspecialchars($api['url']); ?>" style="width:100%"></td>
+                        <td><input type="number" name="api_timeout[]" value="<?php echo (int)$api['timeout']; ?>" min="1" max="120" style="width:100%"></td>
+                        <td class="center"><button type="button" class="btn-danger-sm" onclick="this.closest('tr').remove()">删除</button></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (count($parsedApis) === 0): ?>
+                    <tr><td colspan="5" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
+                <div style="margin-top:12px">
+                    <button type="button" class="btn-secondary-sm" onclick="addApiRow()" style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存全部</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <?php
+    // ===== 11. 平台规则 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='platform'?'active':''; ?>" id="tab-platform">
+        <h2>🎯 平台规则配置</h2>
+        <div class="panel">
+            <form method="post">
+                <input type="hidden" name="action" value="save_platform">
+                <table class="data-table">
+                    <thead><tr><th>平台名称</th><th>匹配规则</th><th style="width:100px">操作</th></tr></thead>
+                    <tbody id="platTbody">
+                    <?php foreach ((array)$platformCfg as $name => $rule): ?>
+                    <tr>
+                        <td><input type="text" name="platform_name[]" value="<?php echo htmlspecialchars($name); ?>" style="width:100%"></td>
+                        <td><input type="text" name="platform_rule[]" value="<?php echo htmlspecialchars($rule); ?>" style="width:100%"></td>
+                        <td><button type="button" class="btn-danger-sm" onclick="this.closest('tr').remove()">删除</button></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (count((array)$platformCfg) === 0): ?>
+                    <tr><td colspan="3" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
+                <div style="margin-top:12px">
+                    <button type="button" class="btn-secondary-sm" onclick="addPlatformRow()" style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存全部</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <?php
+    // ===== 12. 系统开关 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='switch'?'active':''; ?>" id="tab-switch">
+        <h2>🔀 系统开关</h2>
+        <form method="post">
+            <input type="hidden" name="action" value="save_switch">
+            <div class="panel">
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_global_api" <?php if (!empty($switchConfig['enable_global_api'])) echo 'checked'; ?>> 启用总接口并发请求</label>
+                <label style="display:block;margin:10px 0">ZJK 文件路径：<input type="text" name="zjk_file_path" value="<?php echo htmlspecialchars($switchConfig['zjk_file_path'] ?? 'ZJK.txt'); ?>" style="width:300px;margin-left:10px"></label>
+                <label style="display:block;margin:10px 0">总接口超时（秒）：<input type="number" name="global_api_timeout" value="<?php echo (int)($switchConfig['global_api_timeout'] ?? 8); ?>" min="1" style="width:100px;margin-left:10px"></label>
+                <label style="display:block;margin:10px 0">总接口并发数：<input type="number" name="global_api_count" value="<?php echo (int)($switchConfig['global_api_count'] ?? 6); ?>" min="0" style="width:100px;margin-left:10px"></label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_zjk_apis" <?php if (!empty($switchConfig['enable_zjk_apis'])) echo 'checked'; ?>> 启用 ZJK.txt 自定义接口</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_m3u8_direct" <?php if (!empty($switchConfig['enable_m3u8_direct'])) echo 'checked'; ?>> M3U8 直链快速通道</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_unified_display" <?php if (!empty($switchConfig['enable_unified_display'])) echo 'checked'; ?>> 统一响应格式</label>
+                <div style="margin-top:12px">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <?php
+    // ===== 13. ZJK 自定义接口 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='zjk'?'active':''; ?>" id="tab-zjk">
+        <h2>📝 ZJK.txt 自定义接口</h2>
+        <div class="panel">
+            <p style="color:#666">格式：<code class="monocode">接口地址|超时秒数</code>，每行一条。例如：<code class="monocode">https://jx.example.com/?url={url}|8</code></p>
+            <form method="post">
+                <input type="hidden" name="action" value="save_zjk">
+                <textarea name="zjk_content" style="width:100%;min-height:300px;font-family:Consolas,monospace;padding:12px;font-size:13px;border:1px solid #ddd;border-radius:8px"><?php echo htmlspecialchars($zjkContent); ?></textarea>
+                <div style="margin-top:12px"><button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button></div>
+            </form>
+        </div>
+    </div>
+
+    <?php
+    // ===== 14. 接口在线测试 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='test'?'active':''; ?>" id="tab-test">
+        <h2>🧪 接口在线测试</h2>
+        <div class="panel">
+            <form method="get">
+                <input type="hidden" name="page" value="test">
+                <div style="display:flex;gap:15px;align-items:center;flex-wrap:wrap">
+                    <label style="font-size:14px;color:#555">视频链接：</label>
+                    <input type="text" name="test_url" value="<?php echo isset($_GET['test_url']) ? htmlspecialchars($_GET['test_url']) : ''; ?>" style="flex:1;min-width:300px;padding:10px;border:1px solid #ddd;border-radius:6px" placeholder="https://v.qq.com/x/cover/example.html">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">开始测试</button>
+                </div>
+            </form>
+        </div>
+        <?php if (!empty($testResults)): ?>
+        <div class="panel">
+            <h3>📊 测试结果（<?php echo count($testResults); ?> 个接口）</h3>
+            <table class="data-table">
+                <thead><tr><th>接口名称</th><th>HTTP 状态</th><th>响应时间</th><th>有效响应</th></tr></thead>
+                <tbody>
+                <?php foreach ($testResults as $r): ?>
+                <tr>
+                    <td><?php echo htmlspecialchars($r['name']); ?></td>
+                    <td><span class="badge <?php echo $r['code'] == 200 ? 'badge-green' : 'badge-red'; ?>"><?php echo (int)$r['code']; ?></span></td>
+                    <td><?php echo number_format($r['time'], 3); ?> 秒</td>
+                    <td><span class="badge <?php echo $r['valid'] ? 'badge-green' : 'badge-red'; ?>"><?php echo $r['valid'] ? '✅ 成功' : '❌ 失败'; ?></span></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <?php
+    // ===== 15. 自定义算法 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='custom_algorithms'?'active':''; ?>" id="tab-custom_algorithms">
+        <h2>🧩 自定义算法管理</h2>
+        <p style="color:#666">目录：<code class="monocode">/algorithms/*.php</code>，每个文件为一个独立算法类，继承 <code class="monocode">AbstractAlgorithm</code>。</p>
+        <div class="panel">
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                <button type="button" class="btn-primary-sm" onclick="reloadAlgorithms()" style="font-size:14px;padding:8px 18px">🔄 重新扫描算法</button>
+                <span id="algoStatus" style="color:#555;font-size:13px">就绪</span>
+                <span style="margin-left:auto;color:#888;font-size:13px">共 <strong id="algoTotal">0</strong> 个 · 启用 <strong id="algoEnabled">0</strong> 个</span>
+            </div>
+            <h3 style="margin-top:20px">📋 已加载算法列表</h3>
+            <table class="data-table" id="algoTable">
+                <thead><tr><th>ID</th><th>名称</th><th>描述</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody><tr><td colspan="5" style="text-align:center;color:#888">点击上方「重新扫描」加载</td></tr></tbody>
+            </table>
+        </div>
+        <div class="panel">
+            <h3>🧪 本地测试</h3>
+            <textarea id="algoTestInput" style="width:100%;min-height:120px;padding:10px;font-family:monospace;font-size:13px;border:1px solid #ddd;border-radius:8px" placeholder="输入文本或 URL 进行测试..."></textarea>
+            <div style="margin-top:8px">
+                <label>作用域：
+                    <select id="algoTestScope">
+                        <option value="all">全部</option>
+                        <option value="url">仅 URL</option>
+                        <option value="m3u8">仅 M3U8</option>
+                    </select>
+                </label>
+                <button type="button" class="btn-primary-sm" onclick="testAlgorithms()" style="font-size:14px;padding:8px 18px">▶ 测试</button>
+            </div>
+            <pre id="algoTestResult" style="margin-top:12px;padding:12px;background:#f8f8fa;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;color:#333">结果将显示在此处...</pre>
+        </div>
+    </div>
+
+    <?php
+    // ===== 16. 配置备份 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='backup'?'active':''; ?>" id="tab-backup">
+        <h2>💾 配置备份</h2>
+        <div class="panel">
+            <form method="post">
+                <input type="hidden" name="action" value="create_backup">
+                <p>一键备份所有配置文件到 cache/backup_时间戳/ 目录。包括：API / 平台 / 开关 / 后台 / NoAd / ZJK.txt。</p>
+                <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">📦 立即备份</button>
+            </form>
+        </div>
+        <?php if (!empty($msg) && strpos($msg, '备份') !== false): ?>
+        <div class="panel">
+            <h3>✅ 备份提示</h3>
+            <p style="color:#28a745"><?php echo htmlspecialchars($msg); ?></p>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <?php
+    // ===== 17. 修改管理员密码 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='password'?'active':''; ?>" id="tab-password">
+        <h2>🔐 修改管理员密码</h2>
+        <div class="panel" style="max-width:500px">
+            <form method="post">
+                <input type="hidden" name="action" value="change_password">
+                <label style="display:block;margin:10px 0">当前密码<br><input type="password" name="old_password" required style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></label>
+                <label style="display:block;margin:10px 0">新密码（至少 6 位）<br><input type="password" name="new_password" minlength="6" required style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></label>
+                <label style="display:block;margin:10px 0">确认密码<br><input type="password" name="confirm_password" minlength="6" required style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></label>
+                <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px;margin-top:10px">🔐 修改密码</button>
+            </form>
+        </div>
+    </div>
+
+    <?php
+    // ===== 18. 后台设置 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='setting'?'active':''; ?>" id="tab-setting">
+        <h2>🛠️ 后台设置</h2>
+        <form method="post">
+            <input type="hidden" name="action" value="save_admin_config">
+            <div class="panel">
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="admin_enabled" <?php if (!empty($adminConfig['admin_enabled'])) echo 'checked'; ?>> ✅ 启用后台管理</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enforce_port" <?php if (!empty($adminConfig['enforce_port'])) echo 'checked'; ?>> ⚠️ 强制端口校验</label>
+                <label style="display:block;margin:10px 0">允许访问的端口（逗号分隔）：<br><input type="text" name="allowed_ports" value="<?php echo htmlspecialchars(implode(',', $adminConfig['allowed_ports'] ?? [])); ?>" style="width:300px;margin-top:4px"></label>
+                <label style="display:block;margin:10px 0">允许访问的 IP（逗号分隔）：<br><input type="text" name="allowed_ips" value="<?php echo htmlspecialchars(implode(',', $adminConfig['allowed_ips'] ?? [])); ?>" style="width:300px;margin-top:4px"></label>
+                <label style="display:block;margin:10px 0">会话有效期（秒）：<input type="number" name="session_lifetime" value="<?php echo max(60, (int)($adminConfig['session_lifetime'] ?? 7200)); ?>" min="60" max="864000" style="width:120px;margin-left:10px"></label>
+                <label style="display:block;margin:10px 0">最大登录失败次数：<input type="number" name="max_login_attempts" value="<?php echo max(1, (int)($adminConfig['max_login_attempts'] ?? 5)); ?>" min="1" max="999" style="width:100px;margin-left:10px"></label>
+                <label style="display:block;margin:10px 0">失败锁定时长（秒）：<input type="number" name="lockout_duration" value="<?php echo max(60, (int)($adminConfig['lockout_duration'] ?? 300)); ?>" min="60" max="86400" style="width:100px;margin-left:10px"></label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_log" <?php if (!empty($adminConfig['enable_log'])) echo 'checked'; ?>> 📒 启用操作日志</label>
+                <div style="margin-top:16px">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存后台设置</button>
+                </div>
+            </div>
+        </form>
+
+        <form method="post" style="margin-top:16px" onsubmit="return confirm('确认要修改后台入口文件名？请确保你能记住新文件名！');">
+            <input type="hidden" name="action" value="change_path">
+            <div class="panel">
+                <h3>🔄 修改后台入口路径</h3>
+                <p style="color:#666;font-size:13px">当前路径：<strong><?php echo htmlspecialchars($currentScript); ?></strong></p>
+                <label style="display:block;margin:10px 0">新后台文件名：<input type="text" name="new_path" placeholder="例：my_console.php" pattern="[A-Za-z0-9_\-]+\.php$" required style="width:260px;margin-left:10px"></label>
+                <button type="submit" class="btn-danger-sm" style="font-size:14px;padding:10px 24px">🔄 重命名后台入口</button>
+            </div>
+        </form>
+    </div>
+
+</div>
+
+<script>
+// ===== 标签页切换 =====
+(function() {
+    var nav = document.getElementById('tabsNav');
+    if (!nav) return;
+    var tabs = nav.querySelectorAll('button[data-tab]');
+    var panels = document.querySelectorAll('.tab-panel');
+    tabs.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var tab = this.getAttribute('data-tab');
+            tabs.forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+            panels.forEach(function(p) {
+                if (p.id === 'tab-' + tab) p.classList.add('active');
+                else p.classList.remove('active');
+            });
+        });
+    });
+})();
+
+// ===== M3U8 解析 =====
+function parseM3u8() {
+    var url = document.getElementById('m3u8Url').value.trim();
+    if (!url) { alert('请输入 M3U8 链接'); return; }
+    var statusEl = document.getElementById('parseStatus');
+    var formData = new FormData();
+    formData.append('action', 'ajax_parse_m3u8');
+    formData.append('m3u8_url', url);
+    statusEl.textContent = '解析中...';
+    fetch('<?php echo htmlspecialchars($currentScript); ?>', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code !== 200) { statusEl.textContent = '解析失败：' + (data.msg || '未知错误'); return; }
+            var segs = document.getElementById('segmentList');
+            var html = '<div class="panel"><h3>📊 解析结果（总 ' + data.total + ' 段，广告 ' + data.ad_count + ' 段，保留 ' + data.keep_count + ' 段）</h3>';
+            if (data.segments && data.segments.length) {
+                html += '<table class="data-table"><thead><tr><th>序号</th><th>时长</th><th>URI</th><th>类型</th></tr></thead><tbody>';
+                data.segments.forEach(function(seg) {
+                    html += '<tr' + (seg.is_ad ? ' style="background:#ffebee"' : '') + '>';
+                    html += '<td>' + seg.idx + '</td><td>' + seg.duration + 's</td>';
+                    html += '<td style="font-size:12px;word-break:break-all">' + seg.uri + '</td>';
+                    html += '<td>' + (seg.is_ad ? '<span class="badge badge-red">广告</span>' : '<span class="badge badge-green">保留</span>') + '</td>';
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+            }
+            html += '</div>';
+            segs.innerHTML = html;
+            statusEl.textContent = '解析完成（站点：' + (data.site_name || '未知') + '）';
+        })
+        .catch(function(e) { statusEl.textContent = '请求失败：' + e.message; });
+}
+
+// ===== 接口添加/编辑辅助函数 =====
+function addApiRow() {
+    var tbody = document.getElementById('apiTbody');
+    if (tbody.querySelector('tr')) {
+        // 如果已有占位行且内容为"暂无数据"，不清除（因为我们使用的是正常行结构）
+    }
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td style="color:#999;text-align:center">+</td><td><input type="text" name="api_name[]" placeholder="接口名称" style="width:100%"></td><td><input type="text" name="api_url[]" placeholder="https://jx.example.com/?url=" style="width:100%"></td><td><input type="number" name="api_timeout[]" value="5" min="1" max="120" style="width:100%"></td><td><button type="button" class="btn-danger-sm" onclick="this.closest(\'tr\').remove()">删除</button></td>';
+    tbody.appendChild(tr);
+}
+function addPlatformRow() {
+    var tbody = document.getElementById('platTbody');
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><input type="text" name="platform_name[]" placeholder="平台名" style="width:100%"></td><td><input type="text" name="platform_rule[]" placeholder="域名关键字|接口名" style="width:100%"></td><td><button type="button" class="btn-danger-sm" onclick="this.closest(\'tr\').remove()">删除</button></td>';
+    tbody.appendChild(tr);
+}
+
+// ===== 站点编辑辅助 =====
+function editSite(id, name, code, url, match, remark, enabled) {
+    document.getElementById('siteIdInput').value = id;
+    document.getElementById('siteName').value = name;
+    document.getElementById('siteCode').value = code;
+    document.getElementById('siteUrl').value = url;
+    document.getElementById('sitePattern').value = match;
+    document.getElementById('siteRemark').value = remark;
+    document.getElementById('siteEnabled').checked = enabled;
+    window.scrollTo({top:0, behavior:'smooth'});
+}
+function resetSiteForm() {
+    document.getElementById('siteIdInput').value = 0;
+    document.getElementById('siteForm').reset();
+}
+
+// ===== 解析源编辑辅助 =====
+function editSource(id, name, url, type, timeout, order, match, remark) {
+    document.getElementById('srcId').value = id;
+    document.getElementById('srcName').value = name;
+    document.getElementById('srcUrl').value = url;
+    document.getElementById('srcType').value = type;
+    document.getElementById('srcTimeout').value = timeout;
+    document.getElementById('srcOrder').value = order;
+    document.getElementById('srcMatch').value = match || '';
+    document.getElementById('srcRemark').value = remark || '';
+    window.scrollTo({top:0, behavior:'smooth'});
+}
+function resetSourceForm() {
+    document.getElementById('srcId').value = 0;
+    document.getElementById('srcForm').reset();
+}
+
+// ===== 算法管理 =====
+function reloadAlgorithms() {
+    var statusEl = document.getElementById('algoStatus');
+    statusEl.textContent = '扫描中...';
+    var formData = new FormData();
+    formData.append('action', 'ajax_list_algorithms');
+    fetch('<?php echo htmlspecialchars($currentScript); ?>', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var tableBody = document.querySelector('#algoTable tbody');
+            if (data.code === 200 && data.algorithms && data.algorithms.length) {
+                var html = '';
+                data.algorithms.forEach(function(a) {
+                    html += '<tr><td>' + (a.id || '-') + '</td><td>' + (a.name || '-') + '</td>';
+                    html += '<td>' + (a.description || '-') + '</td>';
+                    html += '<td>' + (a.enabled ? '<span class="badge badge-green">启用</span>' : '<span class="badge badge-red">禁用</span>') + '</td>';
+                    html += '<td><button type="button" class="btn-secondary-sm" onclick="toggleAlgo(\'' + a.id + '\', ' + (a.enabled ? 0 : 1) + ')">切换</button></td></tr>';
+                });
+                tableBody.innerHTML = html;
+                document.getElementById('algoTotal').textContent = data.algorithms.length;
+                var enabledCount = data.algorithms.filter(function(a) { return a.enabled; }).length;
+                document.getElementById('algoEnabled').textContent = enabledCount;
+                statusEl.textContent = '扫描完成';
+            } else {
+                tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#999">未找到自定义算法</td></tr>';
+                statusEl.textContent = '无可用算法';
+            }
+        })
+        .catch(function(e) { statusEl.textContent = '失败：' + e.message; });
+}
+function toggleAlgo(id, enabled) {
+    var formData = new FormData();
+    formData.append('action', 'ajax_toggle_algo');
+    formData.append('algo_id', id);
+    formData.append('enabled', enabled);
+    fetch('<?php echo htmlspecialchars($currentScript); ?>', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) reloadAlgorithms();
+            else alert('切换失败：' + (data.msg || '未知错误'));
+        });
+}
+function testAlgorithms() {
+    var input = document.getElementById('algoTestInput').value;
+    var scope = document.getElementById('algoTestScope').value;
+    var resultEl = document.getElementById('algoTestResult');
+    if (!input.trim()) { alert('请输入测试内容'); return; }
+    resultEl.textContent = '测试中...';
+    var formData = new FormData();
+    formData.append('action', 'ajax_test_algorithms');
+    formData.append('input', input);
+    formData.append('scope', scope);
+    fetch('<?php echo htmlspecialchars($currentScript); ?>', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                resultEl.textContent = '原始：' + data.original + '\n结果：' + data.result + '\n变化：' + (data.changed ? '是' : '否') + '\n应用：' + (data.applied && data.applied.join ? data.applied.join(', ') : '-');
+            } else {
+                resultEl.textContent = '测试失败：' + (data.msg || '未知错误');
+            }
+        })
+        .catch(function(e) { resultEl.textContent = '请求失败：' + e.message; });
+}
+</script>
+</body>
+</html>
+<?php
+}
+?>
