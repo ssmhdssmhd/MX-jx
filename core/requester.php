@@ -176,7 +176,21 @@ class Requester {
      */
     private function applyUnifiedDisplay($data) {
         $switchConfig = $this->strategy->getSwitchStatus();
-        
+
+        // 为 m3u8 / url 类型响应生成 noad_url（自动去广告后的链接）
+        if (isset($data['url']) && $data['url'] !== '') {
+            $finalUrl = $data['url'];
+            $isM3u8 = (isset($data['type']) && strcasecmp($data['type'], 'm3u8') === 0) ||
+                       (is_string($finalUrl) && preg_match('/\.m3u8(\?|$)/i', $finalUrl));
+            $phpSelf = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+            $proxyScript = rtrim(dirname($phpSelf), '/\\') . '/noad_proxy.php';
+            if ($isM3u8) {
+                $data['noad_url'] = $proxyScript . '?mode=m3u8&src=' . urlencode($finalUrl);
+            } else {
+                $data['noad_url'] = $proxyScript . '?mode=api&url=' . urlencode($finalUrl);
+            }
+        }
+
         if (!$switchConfig['unified_display_enabled']) {
             return $data;
         }

@@ -38,10 +38,15 @@ class M3U8Handler {
      * 生成M3U8直接输出响应
      */
     public static function generateM3U8Response($url, $enableUnifiedDisplay = true) {
+        $phpSelf = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+        $proxyScript = rtrim(dirname($phpSelf), '/\\') . '/noad_proxy.php';
+        $noadUrl = $proxyScript . '?mode=m3u8&src=' . urlencode($url);
+
         $response = [
             'code' => 200,
             'msg' => $enableUnifiedDisplay ? $url : '检测到M3U8，直接输出',
             'url' => $url,
+            'noad_url' => $noadUrl,
             'MX' => '检测到M3U8，直接输出',
             'type' => 'm3u8',
             'developer' => 'MX-射手沫蝴蝶',

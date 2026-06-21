@@ -162,6 +162,7 @@ class NoAdParser {
             $respData   = $result['payload'];
 
             // 3. 如果拿到的是 M3U8，则做广告片段过滤
+            $proxyUrl = $this->buildProxyUrl($originalUrl, $respData['final_url'] ?? '');
             if (!empty($this->config['enable_ad_filter']) &&
                 $respData['type'] === 'm3u8' &&
                 !empty($respData['raw_m3u8'])) {
@@ -172,13 +173,15 @@ class NoAdParser {
 
                 // 如果确实清理了任何内容，就生成代理版播放列表
                 if ($adRemoved > 0) {
-                    $proxyUrl = $this->buildProxyUrl($originalUrl, $respData['final_url']);
                     $respData['noad_url']   = $proxyUrl;
                     $respData['url']        = $proxyUrl;  // 默认返回去广告版
                     $respData['clean_m3u8'] = $cleanResult['content'];
                 } else {
                     $respData['noad_url'] = $respData['final_url'];
                 }
+            } else {
+                // 未启用广告过滤或非 m3u8：也提供代理版入口，方便前端按需选用
+                $respData['noad_url'] = $proxyUrl;
             }
 
             // 写入缓存
@@ -992,7 +995,7 @@ class NoAdParser {
 
     private function buildProxyUrl($originalUrl, $remoteM3u8) {
         $phpSelf = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
-        $proxy = dirname($phpSelf) . '/noad_proxy.php';
+        $proxy = rtrim(dirname($phpSelf), '/\\') . '/noad_proxy.php';
         return $proxy . '?mode=m3u8&src=' . urlencode($remoteM3u8) .
                '&ref=' . urlencode($originalUrl);
     }
