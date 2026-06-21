@@ -143,6 +143,84 @@ return array(
         7 => array("key" => "short",    "name" => "📱 短视频", "icon" => "📱"),
     ),
 
+    // ========== 资源站去广告开关（v4.1.0 新增）==========
+    "enable_resource_site_cleaning" => true,   // 启用资源站域名识别 + suanfa 算法清理
+    "resource_site_debug" => false,            // 是否返回资源站识别信息（供调试）
+
+    // ========== 预置资源站（后台会从配置 + 数据库合并）==========
+    "resource_sites" => array(
+        // 电影天堂 (dytt)
+        array(
+            "name"          => "电影天堂",
+            "short_code"    => "dytt",
+            "base_url"      => "https://www.dytt8.com",
+            "patterns"      => array("dytt", "电影天堂", "dy8", "dianyingtiantang"),
+            "algorithms"    => array("suanfasmall", "suanfa3", "suanfadyt"),
+            "priority"      => 1,
+            "enabled"       => true,
+        ),
+        // 西瓜视频 (xigua / xiguang)
+        array(
+            "name"          => "西瓜资源",
+            "short_code"    => "xg",
+            "base_url"      => "https://www.360kan.com",
+            "patterns"      => array("xigua", "xiguang", "西瓜", "360kan", "ixigua", "ixg"),
+            "algorithms"    => array("suanfaxiguang", "suanfa5", "suanfa9"),
+            "priority"      => 2,
+            "enabled"       => true,
+        ),
+        // 如意资源站
+        array(
+            "name"          => "如意资源",
+            "short_code"    => "ry",
+            "base_url"      => "https://jx.ruyi.com",
+            "patterns"      => array("ruyi", "如意", "ry.jx", "ryplayer"),
+            "algorithms"    => array("suanfa8", "suanfa4", "suanfa5"),
+            "priority"      => 3,
+            "enabled"       => true,
+        ),
+        // 爱奇艺
+        array(
+            "name"          => "爱奇艺去广告",
+            "short_code"    => "iqiyi",
+            "base_url"      => "https://www.iqiyi.com",
+            "patterns"      => array("iqiyi", "爱奇艺", "qiyi"),
+            "algorithms"    => array("suanfa9", "suanfa5", "suanfa4"),
+            "priority"      => 5,
+            "enabled"       => true,
+        ),
+        // 腾讯视频
+        array(
+            "name"          => "腾讯视频去广告",
+            "short_code"    => "qq",
+            "base_url"      => "https://v.qq.com",
+            "patterns"      => array("qq.com", "腾讯", "v.qq", "video.qq"),
+            "algorithms"    => array("suanfa7", "suanfa4", "suanfa5", "suanfa1"),
+            "priority"      => 5,
+            "enabled"       => true,
+        ),
+        // 优酷
+        array(
+            "name"          => "优酷去广告",
+            "short_code"    => "youku",
+            "base_url"      => "https://www.youku.com",
+            "patterns"      => array("youku", "优酷", "yk", "v.youku"),
+            "algorithms"    => array("suanfa7", "suanfa4", "suanfa5", "suanfa1"),
+            "priority"      => 5,
+            "enabled"       => true,
+        ),
+        // 芒果 TV
+        array(
+            "name"          => "芒果 TV",
+            "short_code"    => "mgtv",
+            "base_url"      => "https://www.mgtv.com",
+            "patterns"      => array("mgtv", "芒果", "hunantv", "mgtv.com"),
+            "algorithms"    => array("suanfa7", "suanfa4", "suanfa5"),
+            "priority"      => 6,
+            "enabled"       => true,
+        ),
+    ),
+
     // ========== 默认去广告解析接口（多源自动匹配）==========
     // 可在后台可视化管理，无需改代码；若接口返回的 M3U8 会自动清洗广告
     "default_sources" => array(

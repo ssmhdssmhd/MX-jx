@@ -146,12 +146,17 @@ class Database {
             short_code TEXT DEFAULT '',
             base_url TEXT DEFAULT '',
             match_pattern TEXT DEFAULT '',
+            algorithms TEXT DEFAULT '',
             enabled INTEGER DEFAULT 1,
             parse_count INTEGER DEFAULT 0,
             remark TEXT DEFAULT '',
             created_at INTEGER DEFAULT 0,
             updated_at INTEGER DEFAULT 0
         );");
+        // 兼容旧数据库: 若无 algorithms 列则添加
+        try {
+            $this->pdo->exec("ALTER TABLE noad_sites ADD COLUMN algorithms TEXT DEFAULT ''");
+        } catch (Exception $e) { /* 已存在则忽略 */ }
 
         // 表6: M3U8 解析日志（记录手动解析的历史）
         $this->pdo->exec("CREATE TABLE IF NOT EXISTS noad_parse_log (
@@ -492,14 +497,15 @@ class Database {
     public function addSite($data) {
         $now = time();
         $stmt = $this->pdo->prepare(
-            "INSERT INTO noad_sites(name,short_code,base_url,match_pattern,enabled,
-             parse_count,remark,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO noad_sites(name,short_code,base_url,match_pattern,algorithms,enabled,
+             parse_count,remark,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
         );
         $stmt->execute(array(
             trim($data['name'] ?? ''),
             trim($data['short_code'] ?? ''),
             trim($data['base_url'] ?? ''),
             trim($data['match_pattern'] ?? ''),
+            trim($data['algorithms'] ?? ''),
             (int)($data['enabled'] ?? 1),
             0,
             trim($data['remark'] ?? ''),
@@ -511,7 +517,7 @@ class Database {
     public function updateSite($id, $data) {
         $now = time();
         $stmt = $this->pdo->prepare(
-            "UPDATE noad_sites SET name=?, short_code=?, base_url=?, match_pattern=?,
+            "UPDATE noad_sites SET name=?, short_code=?, base_url=?, match_pattern=?, algorithms=?,
              enabled=?, remark=?, updated_at=? WHERE id=?"
         );
         return $stmt->execute(array(
@@ -519,6 +525,7 @@ class Database {
             trim($data['short_code'] ?? ''),
             trim($data['base_url'] ?? ''),
             trim($data['match_pattern'] ?? ''),
+            trim($data['algorithms'] ?? ''),
             (int)($data['enabled'] ?? 1),
             trim($data['remark'] ?? ''),
             $now, $id

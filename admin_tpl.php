@@ -736,7 +736,27 @@ code.monocode { background:#f5f5fa; padding:2px 6px; border-radius:4px; font-siz
                     <tr><td style="width:120px;">站点名称 *</td><td><input type="text" name="site_name" id="siteName" required style="width:100%; max-width:420px;" placeholder="例：优质资源聚合"></td></tr>
                     <tr><td>短代码</td><td><input type="text" name="site_code" id="siteCode" style="width:100%; max-width:240px;" placeholder="例：yzzy"></td></tr>
                     <tr><td>基础 URL</td><td><input type="text" name="site_url" id="siteUrl" style="width:100%; max-width:520px;" placeholder="https://..."></td></tr>
-                    <tr><td>匹配规则</td><td><input type="text" name="site_pattern" id="sitePattern" style="width:100%; max-width:420px;" placeholder="例：.m3u8,.mp4"></td></tr>
+                    <tr><td>匹配规则（关键词，用逗号分隔）</td><td><input type="text" name="site_pattern" id="sitePattern" style="width:100%; max-width:520px;" placeholder="例：xigua,ixigua,西瓜"></td></tr>
+                    <tr><td>去广告算法（逗号分隔，顺序执行）</td>
+                        <td>
+                            <input type="text" name="site_algorithms" id="siteAlgorithms" style="width:100%; max-width:520px;"
+                                placeholder="suanfasmall,suanfa4,suanfa5,suanfaxiguang">
+                            <div style="font-size:12px; color:#666; margin-top:4px;">
+                                可用算法:
+                                <strong>suanfa1</strong>(去跟踪参数) ·
+                                <strong>suanfa3</strong>(路径截断) ·
+                                <strong>suanfa4</strong>(协议规范化) ·
+                                <strong>suanfa5</strong>(路径清理) ·
+                                <strong>suanfa6</strong>(去缓存参数) ·
+                                <strong>suanfa7</strong>(广告域名替换) ·
+                                <strong>suanfa8</strong>(302重定向解包) ·
+                                <strong>suanfa9</strong>(深度清理，组合suanfa7+4+5+1) ·
+                                <strong>suanfasmall</strong>(广告特征检测) ·
+                                <strong>suanfaxiguang</strong>(西瓜专用) ·
+                                <strong>suanfadyt</strong>(电影天堂专用)
+                            </div>
+                        </td>
+                    </tr>
                     <tr><td>备注</td><td><input type="text" name="site_remark" id="siteRemark" style="width:100%; max-width:520px;" placeholder="备注说明"></td></tr>
                     <tr><td>启用</td><td><input type="checkbox" name="site_enabled" id="siteEnabled" checked></td></tr>
                 </table>
@@ -753,7 +773,7 @@ code.monocode { background:#f5f5fa; padding:2px 6px; border-radius:4px; font-siz
                 <p style="color:#888;">暂无资源站点。请先添加一个。</p>
             <?php else: ?>
                 <table class="data-table">
-                    <thead><tr><th>ID</th><th>名称</th><th>短代码</th><th>基础 URL</th><th>匹配规则</th><th>使用次数</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
+                    <thead><tr><th>ID</th><th>名称</th><th>短代码</th><th>基础 URL</th><th>匹配规则</th><th>去广告算法</th><th>使用次数</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
                     <tbody>
                     <?php foreach ($sites as $s): ?>
                     <tr>
@@ -762,11 +782,12 @@ code.monocode { background:#f5f5fa; padding:2px 6px; border-radius:4px; font-siz
                         <td><?php echo htmlspecialchars($s['short_code'] ?? '-'); ?></td>
                         <td style="max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"><?php echo htmlspecialchars($s['base_url'] ?? '-'); ?></td>
                         <td><?php echo htmlspecialchars($s['match_pattern'] ?? '-'); ?></td>
+                        <td style="max-width:260px; font-size:12px; color:#666;"><?php echo htmlspecialchars($s['algorithms'] ?? '-'); ?></td>
                         <td><?php echo (int)($s['parse_count'] ?? 0); ?></td>
                         <td><?php echo !empty($s['enabled']) ? '<span class="badge badge-green">启用</span>' : '<span class="badge badge-red">禁用</span>'; ?></td>
                         <td style="max-width:200px; font-size:12px; color:#666;"><?php echo htmlspecialchars($s['remark'] ?? ''); ?></td>
                         <td style="white-space:nowrap;">
-                            <button type="button" class="btn-primary-sm" onclick="editSite(<?php echo (int)$s['id']; ?>,'<?php echo htmlspecialchars(addslashes($s['name'])); ?>','<?php echo htmlspecialchars(addslashes($s['short_code'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['base_url'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['match_pattern'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['remark'] ?? '')); ?>',<?php echo (int)($s['enabled'] ?? 0); ?>)">✏️ 编辑</button>
+                            <button type="button" class="btn-primary-sm" onclick="editSite(<?php echo (int)$s['id']; ?>,'<?php echo htmlspecialchars(addslashes($s['name'])); ?>','<?php echo htmlspecialchars(addslashes($s['short_code'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['base_url'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['match_pattern'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['algorithms'] ?? '')); ?>','<?php echo htmlspecialchars(addslashes($s['remark'] ?? '')); ?>',<?php echo (int)($s['enabled'] ?? 0); ?>)">✏️ 编辑</button>
                             <form method="post" style="display:inline; margin-left:4px;" onsubmit="return confirm('确认删除该站点？');"><input type="hidden" name="action" value="delete_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-danger-sm">🗑️</button></form>
                             <form method="post" style="display:inline; margin-left:4px;"><input type="hidden" name="action" value="toggle_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-secondary-sm">🔄</button></form>
                         </td>
@@ -1008,12 +1029,13 @@ function copyToClipboard(elId, label){
 }
 
 // ======== 站点表单编辑/重置 ========
-function editSite(id, name, code, url, pattern, remark, enabled){
+function editSite(id, name, code, url, pattern, algorithms, remark, enabled){
     document.getElementById('siteIdInput').value = id;
     document.getElementById('siteName').value = name || '';
     document.getElementById('siteCode').value = code || '';
     document.getElementById('siteUrl').value = url || '';
     document.getElementById('sitePattern').value = pattern || '';
+    document.getElementById('siteAlgorithms').value = algorithms || '';
     document.getElementById('siteRemark').value = remark || '';
     document.getElementById('siteEnabled').checked = !!enabled;
     document.querySelector('#tab-sites h2').scrollIntoView({behavior:'smooth'});

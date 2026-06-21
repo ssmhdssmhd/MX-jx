@@ -61,6 +61,38 @@ switch ($mode) {
         }
         $videoType = $_GET['type'] ?? '';
         $result = $parser->parse($url, $videoType);
+
+        // ============================================================
+        // 资源站去广告：对返回的 URL / m3u8 内容应用 suanfa 算法
+        // ============================================================
+        $noadCfg = require __DIR__ . '/config/noad.php';
+        if (!empty($noadCfg['enable_resource_site_cleaning'])) {
+            $cleanTarget = '';
+            if (!empty($result['url']))              $cleanTarget = $result['url'];
+            else if (!empty($result['noad_url']))    $cleanTarget = $result['noad_url'];
+
+            if ($cleanTarget !== '') {
+                $cleanResult = $parser->cleanByResourceSite($url, $cleanTarget);
+                if (!empty($cleanResult['data']) && $cleanResult['data'] !== $cleanTarget) {
+                    $result['noad_url'] = $cleanResult['data'];
+                    $result['url']      = $cleanResult['data'];
+                }
+                $result['resource_site'] = array(
+                    'matched'   => $cleanResult['matched_site'],
+                    'algorithms'=> $cleanResult['algorithms_applied'],
+                    'ad_tokens' => $cleanResult['ad_tokens_removed'],
+                );
+            }
+
+            // 若返回中有 raw_m3u8/clean_m3u8 字段，则对每个 URI 也应用清理
+            if (!empty($result['clean_m3u8'])) {
+                $cleanM3u8 = $parser->cleanByResourceSite($url, $result['clean_m3u8']);
+                if (!empty($cleanM3u8['data'])) {
+                    $result['clean_m3u8'] = $cleanM3u8['data'];
+                }
+            }
+        }
+
         header('Content-Type: application/json; charset=utf-8');
         header('Access-Control-Allow-Origin: *');
         echo json_encode($result, JSON_UNESCAPED_UNICODE);

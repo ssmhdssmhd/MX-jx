@@ -871,4 +871,448 @@ class NoAdParser {
                                      $fromCache, $status);
         } catch (Exception $e) { /* 静默 */ }
     }
+
+    // ============================================================
+    // ====== 资源站去广告：域名识别 + 算法（suanfa1~9 等）======
+    // ============================================================
+
+    /**
+     * 对外入口：识别资源站并应用对应去广告算法
+     *
+     * @param string $url  原始视频 URL（识别资源站用）
+     * @param string $data 待处理的字符串（视频 URL / M3U8 内容 / JSON）
+     * @return array { 'data': string 处理后数据, 'matched_site': string 匹配的站点名,
+     *                  'algorithms_applied': array 应用的算法列表,
+     *                  'ad_tokens_removed': int 去除的广告标记总数 }
+     */
+    public function cleanByResourceSite($url, $data) {
+        $result = array(
+            'data'                => $data,
+            'matched_site'        => '',
+            'algorithms_applied'  => array(),
+            'ad_tokens_removed'   => 0,
+        );
+
+        if ($data === '' || $data === null) return $result;
+
+        $turerCount = 0;
+        $ruyi = false;
+        $xgzy = true;
+
+        // ========= 电影天堂特殊处理（dytt/电影天堂域名）=========
+        if ($this->checkDomainContainsDytt($url)) {
+            $result['matched_site'] = '电影天堂 (dytt)';
+            $turer = $this->suanfasmall($data, 0);
+            $data  = $this->suanfa3($data, $turer - 1);
+            $result['algorithms_applied'][] = 'suanfasmall';
+            $result['algorithms_applied'][] = 'suanfa3';
+            $result['ad_tokens_removed'] += $turer;
+        }
+
+        // ========= 西瓜资源站（xiguang / xigua / 360kan 等）=========
+        if ($this->checkDomainContainsXg($url)) {
+            if ($result['matched_site'] === '') $result['matched_site'] = '西瓜 (xiguang/xigua)';
+            $data = $this->suanfaxiguang($data, 0, 0);
+            $xgzy = false;
+            $result['algorithms_applied'][] = 'suanfaxiguang';
+            $result['ad_tokens_removed']++;
+        }
+
+        // ========= 如意资源站（ruyi 相关）=========
+        if ($this->checkDomainContainsRuyi($url)) {
+            if ($result['matched_site'] === '') $result['matched_site'] = '如意 (ruyi)';
+            $ruyi = (bool)$this->suanfasmall($data);
+            $result['algorithms_applied'][] = 'ruyi-detect';
+        }
+
+        // ========= 组合分支：根据 ruyi + xgzy 组合决策 =========
+        if ($ruyi && $xgzy) {
+            $data = $this->suanfa5($data, 0, 0);
+            $data = $this->suanfa4($data, 0, 4);
+            $result['algorithms_applied'][] = 'suanfa5';
+            $result['algorithms_applied'][] = 'suanfa4';
+            $result['ad_tokens_removed'] += 2;
+        }
+
+        if (!$ruyi && $xgzy) {
+            $true = $this->suanfa2($data);
+            if ($true) {
+                $data = $this->suanfa9($data, 0, 0);
+                $data = $this->suanfa5($data, 1, 2);
+                $data = $this->suanfa3($data, 1, 2);
+                $result['algorithms_applied'][] = 'suanfa9';
+                $result['algorithms_applied'][] = 'suanfa5';
+                $result['algorithms_applied'][] = 'suanfa3';
+                $result['ad_tokens_removed'] += 3;
+            } else {
+                $data = $this->suanfa8($data);
+                $data = $this->suanfa4($data, 0, 4);
+                $result['algorithms_applied'][] = 'suanfa8';
+                $result['algorithms_applied'][] = 'suanfa4';
+                $result['ad_tokens_removed'] += 2;
+            }
+        }
+
+        // ========= 兜底：对任意字符串走一遍轻量算法 =========
+        if (empty($result['matched_site'])) {
+            $before = $this->countAdTokens($data);
+            $data = $this->suanfa4($data, 0, 0);
+            $data = $this->suanfa8($data);
+            $after = $this->countAdTokens($data);
+            $result['matched_site'] = '通用清理';
+            $result['algorithms_applied'][] = 'suanfa4';
+            $result['algorithms_applied'][] = 'suanfa8';
+            $result['ad_tokens_removed'] += max(0, $before - $after);
+        }
+
+        $result['data'] = $data;
+        return $result;
+    }
+
+    // --------- 资源站域名识别函数 ---------
+
+    private function checkDomainContainsXg($url) {
+        $host = strtolower($this->getHostFromUrl($url));
+        $patterns = array(
+            'xigua', 'xiguang', '360kan', 'jx.xg', 'xg.jx',
+            '西瓜', 'xigua-video', 'xiguavideo', 'xg-video',
+            'xiguayingshi', 'ixigua', 'ixg', 'xgplayer',
+        );
+        foreach ($patterns as $p) {
+            if (strpos($host, $p) !== false || strpos(strtolower($url), $p) !== false) return true;
+        }
+        return false;
+    }
+
+    private function checkDomainContainsRuyi($url) {
+        $host = strtolower($this->getHostFromUrl($url));
+        $patterns = array(
+            'ruyi', 'ry.jx', 'jx.ry', '如意', 'ryplayer',
+            'ruyi-video', 'ruyivideo', 'ry-vod', 'vod-ry',
+            'ryvideo', 'ruyi.tv', 'ry.tv',
+        );
+        foreach ($patterns as $p) {
+            if (strpos($host, $p) !== false || strpos(strtolower($url), $p) !== false) return true;
+        }
+        return false;
+    }
+
+    private function checkDomainContainsDytt($url) {
+        $host = strtolower($this->getHostFromUrl($url));
+        $patterns = array(
+            'dytt', '电影天堂', 'dianyingtiantang', 'dytv',
+            'dy8', 'dy2018', 'dy1234', 'dyvod', 'dy-api',
+            'yttv', 'dianying', 'dy.cc', 'dytt8',
+        );
+        foreach ($patterns as $p) {
+            if (strpos($host, $p) !== false || strpos(strtolower($url), $p) !== false) return true;
+        }
+        return false;
+    }
+
+    private function getHostFromUrl($url) {
+        if ($url === '' || $url === null) return '';
+        $parts = parse_url($url);
+        if ($parts === false) return '';
+        $host = $parts['host'] ?? '';
+        if ($host === '' && preg_match('/https?:\/\/([^\/\s]+)/i', $url, $m)) {
+            $host = $m[1];
+        }
+        return $host;
+    }
+
+    // --------- suanfa 算法系列（URL/数据清理）---------
+
+    /**
+     * suanfa1: 去除 URL 中的分析/跟踪参数
+     */
+    public function suanfa1($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        $blacklist = array(
+            'from=', 'from_uid=', 'spm=', 'utm_source', 'utm_medium',
+            'utm_campaign', 'utm_content', 'utm_term', 'track', 'trace',
+            'refer', 'referer', 'ref=', 'aff=', 'affiliate', 'adid=',
+            'ad=', 'clickid=', 'click_id=', 'clk=', 'log_id=', 'logid=',
+            'sign=', 'nonce=', 'token=', 'tk=', 'skey=',
+        );
+        $lines = preg_split('/\r\n|\r|\n/', $data);
+        $out = array();
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (filter_var($line, FILTER_VALIDATE_URL)) {
+                foreach ($blacklist as $bad) {
+                    $line = preg_replace('/(&|\?)' . preg_quote($bad, '/') . '[^&]*/i', '$1', $line);
+                }
+                // 清理多余的 & 或空查询
+                $line = preg_replace('/\?&+/', '?', $line);
+                $line = rtrim($line, '?&');
+            }
+            $out[] = $line;
+        }
+        return implode("\n", $out);
+    }
+
+    /**
+     * suanfa2: 检测是否含广告标记，返回 bool
+     */
+    public function suanfa2($data) {
+        if (!is_string($data)) return false;
+        $needles = array('ad_', '_ad', 'adver', 'advert', 'promo', 'banner',
+                          '贴片', '片头', '广告', 'pre-roll', 'mid-roll',
+                          'adbreak', 'ad_url', 'adlink', 'ad-domain', '广告域名');
+        foreach ($needles as $n) {
+            if (stripos($data, $n) !== false) return true;
+        }
+        return false;
+    }
+
+    /**
+     * suanfa3: 以第 p2 个 "/" 为界截断路径（去除尾部广告路径段）
+     */
+    public function suanfa3($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        $lines = preg_split('/\r\n|\r|\n/', $data);
+        $out = array();
+        $limit = (int)$p2;
+        if ($limit <= 0) $limit = 3;
+        foreach ($lines as $line) {
+            $t = trim($line);
+            if (filter_var($t, FILTER_VALIDATE_URL)) {
+                $parts = parse_url($t);
+                if ($parts !== false && isset($parts['path'])) {
+                    $segs = array_values(array_filter(explode('/', $parts['path']),
+                                                       function($x) { return $x !== ''; }));
+                    if (count($segs) > $limit) {
+                        $segs = array_slice($segs, 0, $limit);
+                        $newPath = '/' . implode('/', $segs);
+                        $scheme = $parts['scheme'] ?? 'https';
+                        $host   = $parts['host'] ?? '';
+                        $port   = isset($parts['port']) ? ':' . $parts['port'] : '';
+                        $query  = !empty($parts['query']) ? '?' . $parts['query'] : '';
+                        $line = $scheme . '://' . $host . $port . $newPath . $query;
+                    }
+                }
+            }
+            $out[] = $line;
+        }
+        return implode("\n", $out);
+    }
+
+    /**
+     * suanfa4: 规范化 URL 协议（http→https，补全缺失协议）
+     */
+    public function suanfa4($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        // 1) 替换已知广告域为普通 CDN
+        $adDomains = array(
+            'ad.qq.com' => 'v.qq.com',
+            'adservice.google.com' => 'video.google.com',
+            'v.ad.video.qq.com' => 'v.qq.com',
+            'ad.video.iqiyi.com' => 'www.iqiyi.com',
+            'x.ad.youku.com' => 'v.youku.com',
+        );
+        foreach ($adDomains as $bad => $good) {
+            $data = str_ireplace($bad, $good, $data);
+        }
+        // 2) http:// 升级为 https://（减少混合内容警告）
+        $data = preg_replace('/http:\/\/(?!127\.0\.0\.1|localhost)/i', 'https://', $data);
+        // 3) 去除 "//" 以外的双斜杠（保持协议双斜杠）
+        $data = preg_replace_callback('/(https?:\/\/[^\s]+)/i', function($m) {
+            $u = $m[1];
+            $u = preg_replace('/([^:])(\/{2,})/', '$1/', $u);
+            return $u;
+        }, $data);
+        return $data;
+    }
+
+    /**
+     * suanfa5: 标准化 m3u8 URL 结构（去除多余路径段）
+     */
+    public function suanfa5($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        $lines = preg_split('/\r\n|\r|\n/', $data);
+        $out = array();
+        foreach ($lines as $line) {
+            $t = trim($line);
+            if (filter_var($t, FILTER_VALIDATE_URL)) {
+                // 去除 URL 中常见的广告路径段：如 /ads/, /ad/, /promo/, /banner/, /track/
+                $t = preg_replace('/\/(ads|ad|promo|promotion|banner|track|tracker|tongji|analytics|stat)(\/|\?|$)/i',
+                                   '/', $t);
+                // 修复多余斜杠
+                $t = preg_replace_callback('/(https?:\/\/[^\s]+)/i', function($m) {
+                    return preg_replace('/([^:])(\/{2,})/', '$1/', $m[1]);
+                }, $t);
+                $t = rtrim($t, '/');
+                $line = $t;
+            }
+            $out[] = $line;
+        }
+        return implode("\n", $out);
+    }
+
+    /**
+     * suanfa6: 去除 URL 中防缓存参数（如 _=timestamp, cb=, t=时间戳）
+     */
+    public function suanfa6($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        $lines = preg_split('/\r\n|\r|\n/', $data);
+        $out = array();
+        foreach ($lines as $line) {
+            $t = trim($line);
+            if (filter_var($t, FILTER_VALIDATE_URL)) {
+                $t = preg_replace('/(&|\?)_=\d+/i', '$1', $t);
+                $t = preg_replace('/(&|\?)t=\d+/i', '$1', $t);
+                $t = preg_replace('/(&|\?)timestamp=\d+/i', '$1', $t);
+                $t = preg_replace('/(&|\?)time=\d+/i', '$1', $t);
+                $t = preg_replace('/(&|\?)cb=\d+/i', '$1', $t);
+                $t = preg_replace('/&+/', '&', $t);
+                $t = rtrim($t, '?&');
+                $line = $t;
+            }
+            $out[] = $line;
+        }
+        return implode("\n", $out);
+    }
+
+    /**
+     * suanfa7: 替换视频源中的广告域名
+     */
+    public function suanfa7($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        $map = array(
+            'adcdn.'       => 'cdn.',
+            'ad-push.'     => 'push.',
+            'adplayer.'    => 'player.',
+            'ad-play.'     => 'play.',
+            'ads-video.'   => 'video.',
+            'ad-video.'    => 'video.',
+            'advertising.' => 'video.',
+            'tracker.'     => 'api.',
+            'adapi.'       => 'api.',
+            'clicktrack.'  => 'api.',
+        );
+        foreach ($map as $bad => $good) {
+            $data = str_ireplace($bad, $good, $data);
+        }
+        return $data;
+    }
+
+    /**
+     * suanfa8: 过滤广告相关的 302/重定向，保留真实播放地址
+     */
+    public function suanfa8($data) {
+        if (!is_string($data)) return $data;
+        $lines = preg_split('/\r\n|\r|\n/', $data);
+        $out = array();
+        $redirectPatterns = array(
+            '/\/redirect\?url=/i',
+            '/\/jump\?/i',
+            '/\/track\?/i',
+            '/\/ad\?/i',
+            '/\/goto\?/i',
+        );
+        foreach ($lines as $line) {
+            $t = trim($line);
+            $isRedirect = false;
+            foreach ($redirectPatterns as $p) {
+                if (preg_match($p, $t)) { $isRedirect = true; break; }
+            }
+            if ($isRedirect) {
+                // 尝试提取其中嵌套的 URL
+                if (preg_match('/[?&](?:url|u|target|go)=([^&\s]+)/i', $t, $m)) {
+                    $decoded = urldecode($m[1]);
+                    if (filter_var($decoded, FILTER_VALIDATE_URL)) {
+                        $line = $decoded;
+                    }
+                }
+            }
+            $out[] = $line;
+        }
+        return implode("\n", $out);
+    }
+
+    /**
+     * suanfa9: 深度清理（广告域替换 + URL 规范化）
+     */
+    public function suanfa9($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        $data = $this->suanfa7($data);
+        $data = $this->suanfa4($data);
+        $data = $this->suanfa5($data);
+        $data = $this->suanfa1($data);
+        return $data;
+    }
+
+    /**
+     * suanfasmall: 轻量检测字符串中的广告特征数
+     */
+    public function suanfasmall($data, $flag = 0) {
+        if (!is_string($data)) return 0;
+        $needles = array('ad_', 'ads/', 'ad/', '广告', 'promo', 'banner',
+                          'pre-roll', 'mid-roll', 'post-roll', '贴片', '推广',
+                          'adbreak', 'advert', 'adurl', 'ad_domain');
+        $count = 0;
+        foreach ($needles as $n) {
+            if (stripos($data, $n) !== false) $count++;
+        }
+        return $count;
+    }
+
+    /**
+     * suanfadyt: 电影天堂专有清洗（去除第三方广告接口）
+     */
+    public function suanfadyt($data, $flag = 0) {
+        if (!is_string($data)) return $data;
+        $blacklist = array(
+            'api.dytt-ad.com', 'dytt8.net/ad', 'v.dytt.biz', 'dytt-api.cn',
+            'dytt.ads.com', 'dytt-ad.com', 'dytt-jump.com',
+        );
+        foreach ($blacklist as $bad) {
+            $data = str_ireplace($bad, 'v.qq.com', $data);
+        }
+        $data = $this->suanfa6($data);
+        return $data;
+    }
+
+    /**
+     * suanfaxiguang: 西瓜资源站专有清洗（去除 xigua 自己的广告轨道）
+     */
+    public function suanfaxiguang($data, $p1 = 0, $p2 = 0) {
+        if (!is_string($data)) return $data;
+        // 西瓜常见广告片段前缀
+        $adPrefixes = array(
+            'xg-ad-', 'xiguang-ad-', 'ixg-ad-', 'xigua-ad-',
+            'xg_promo_', 'xg_premiere_', 'ixigua_ad', 'xgplayer_ad'
+        );
+        $lines = preg_split('/\r\n|\r|\n/', $data);
+        $out = array();
+        foreach ($lines as $line) {
+            $skip = false;
+            $t = trim($line);
+            foreach ($adPrefixes as $p) {
+                if (stripos($t, $p) !== false) { $skip = true; break; }
+            }
+            if (!$skip) $out[] = $line;
+        }
+        $data = implode("\n", $out);
+        // 进一步用 suanfa5 做 URL 标准化
+        $data = $this->suanfa5($data);
+        return $data;
+    }
+
+    /**
+     * 辅助：统计字符串中广告特征总数（用于评估去除效果）
+     */
+    public function countAdTokens($data) {
+        if (!is_string($data)) return 0;
+        $tokens = array('ad_', 'ads/', 'ad/', '广告', 'banner', 'promo',
+                         'tracker', 'analytics', 'tongji', 'utm_', 'spm=',
+                         'pre-roll', 'mid-roll', 'post-roll', 'advert',
+                         'clickid', 'ad_domain', 'adapi', 'adcdn', '推广');
+        $c = 0;
+        foreach ($tokens as $t) {
+            $c += substr_count(strtolower($data), strtolower($t));
+        }
+        return $c;
+    }
 }

@@ -301,6 +301,7 @@ elseif ($action === 'save_site' && $db) {
         'short_code' => trim($_POST['site_code'] ?? ''),
         'base_url'    => trim($_POST['site_url'] ?? ''),
         'match_pattern' => trim($_POST['site_pattern'] ?? ''),
+        'algorithms' => trim($_POST['site_algorithms'] ?? ''),
         'enabled' => isset($_POST['site_enabled']) ? 1 : 0,
         'remark'  => trim($_POST['site_remark'] ?? ''),
     );
