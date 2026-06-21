@@ -198,6 +198,19 @@ function buildNoadConfig($c) {
             "    'md5_auto_learn' => " . (isset($c['md5_auto_learn']) && !$c['md5_auto_learn'] ? 'false' : 'true') . ",\n" .
             "    'md5_db_cleanup_days' => " . max(7, (int)($c['md5_db_cleanup_days'] ?? 30)) . ",\n" .
             "    'md5_debug' => " . (!empty($c['md5_debug']) ? 'true' : 'false') . ",\n" .
+            "    // ========================================================\n" .
+            "    // ===== 批量解析特征学习参数（万能规则2） =================\n" .
+            "    'feat_enabled' => " . (isset($c['feat_enabled']) && !$c['feat_enabled'] ? 'false' : 'true') . ",\n" .
+            "    'feat_max_sources' => " . max(2, (int)($c['feat_max_sources'] ?? 3)) . ",\n" .
+            "    'feat_source_timeout' => " . max(5, (int)($c['feat_source_timeout'] ?? 15)) . ",\n" .
+            "    'feat_total_timeout' => " . max(30, (int)($c['feat_total_timeout'] ?? 60)) . ",\n" .
+            "    'feat_min_votes' => " . max(2, (int)($c['feat_min_votes'] ?? 2)) . ",\n" .
+            "    'feat_low_resource_mode' => " . (isset($c['feat_low_resource_mode']) && !$c['feat_low_resource_mode'] ? 'false' : 'true') . ",\n" .
+            "    'feat_max_concurrency' => " . max(1, (int)($c['feat_max_concurrency'] ?? 2)) . ",\n" .
+            "    'feat_sample_count' => " . max(5, (int)($c['feat_sample_count'] ?? 15)) . ",\n" .
+            "    'feat_learn_enabled' => " . (isset($c['feat_learn_enabled']) && !$c['feat_learn_enabled'] ? 'false' : 'true') . ",\n" .
+            "    'feat_use_proxy' => " . (isset($c['feat_use_proxy']) && !$c['feat_use_proxy'] ? 'false' : 'true') . ",\n" .
+            "    'feat_debug' => " . (!empty($c['feat_debug']) ? 'true' : 'false') . ",\n" .
             ");\n";
 }
 function defaultTypes() {
@@ -232,6 +245,7 @@ $ajaxEarlyWhitelist = [
     'ajax_reload_algorithms', 'ajax_test_algorithms',
     'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
     'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist',
+    'ajax_feat_test', 'ajax_feat_stats', 'ajax_feat_learn', 'ajax_feat_mark',
 ];
 if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
     header('Content-Type: application/json; charset=utf-8');
@@ -570,6 +584,97 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             $md5DB->addToWhitelist($md5Hash, '后台人工添加');
             echo json_encode(['code' => 200, 'md5' => $md5Hash, 'added' => true], JSON_UNESCAPED_UNICODE);
             exit;
+        }
+
+        // === 万能规则2 - 批量解析特征学习：测试 / 统计 / 学习 / 标记 ===
+        if ($ajaxEarlyAction === 'ajax_feat_test' || $ajaxEarlyAction === 'ajax_feat_stats'
+            || $ajaxEarlyAction === 'ajax_feat_learn' || $ajaxEarlyAction === 'ajax_feat_mark') {
+            require_once __DIR__ . '/algorithms/pattern_feature_cleaner.php';
+            $feat = new PatternFeatureCleaner($noadConfig);
+            $featDB = $feat->getFeatureDB();
+
+            if ($ajaxEarlyAction === 'ajax_feat_test') {
+                $testUrl = trim($_POST['test_url'] ?? '');
+                if ($testUrl === '' || !filter_var($testUrl, FILTER_VALIDATE_URL)) {
+                    echo json_encode(['code' => 400, 'error' => '请输入有效的视频 URL'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                $results = $feat->batchParse($testUrl);
+                $report = "🧪 万能规则2 测试完成\n";
+                $report .= "测试 URL：$testUrl\n";
+                $report .= "成功解析源：" . count($results) . " 个\n";
+                foreach ($results as $r) {
+                    list($srcName, $segUrls, $domains, $paths) = $r;
+                    $report .= "\n  · $srcName：" . count($segUrls) . " 片段, " . count($domains) . " 域名\n";
+                    $report .= "    域名: " . implode(', ', array_slice($domains, 0, 3)) . "\n";
+                }
+                if (count($results) >= 2) {
+                    $learned = $featDB->learn($testUrl, $results, 2);
+                    $report .= "\n✅ 学习完成：识别 " . ($learned['content_domains'] ?? 0) . " 个正片域名, " . ($learned['ad_domains'] ?? 0) . " 个广告域名\n";
+                } else {
+                    $report .= "\n⚠️  解析源不足2个，未触发学习\n";
+                }
+                echo json_encode(['code' => 200, 'report' => $report], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($ajaxEarlyAction === 'ajax_feat_stats') {
+                $stats = $featDB->getStats();
+                $report = "📊 万能规则2 - 特征库统计\n";
+                if (!empty($stats['enabled'])) {
+                    $report .= "正片域名：" . ($stats['content_domains'] ?? 0) . " 个\n";
+                    $report .= "广告域名：" . ($stats['ad_domains'] ?? 0) . " 个\n";
+                    $report .= "路径模式：" . ($stats['total_paths'] ?? 0) . " 条\n";
+                    $report .= "片段特征：" . ($stats['total_segments'] ?? 0) . " 条\n";
+                    $report .= "数据库大小：" . ($stats['db_size_kb'] ?? 0) . " KB\n";
+                    $contentDomains = $featDB->getContentDomains();
+                    $adDomains = $featDB->getAdDomains();
+                    if (!empty($contentDomains)) $report .= "\n正片域名示例: " . implode(', ', array_slice($contentDomains, 0, 5));
+                    if (!empty($adDomains)) $report .= "\n广告域名示例: " . implode(', ', array_slice($adDomains, 0, 5));
+                } else {
+                    $report .= "特征数据库暂未初始化\n";
+                }
+                echo json_encode(['code' => 200, 'report' => $report], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($ajaxEarlyAction === 'ajax_feat_learn') {
+                $testUrl = trim($_POST['test_url'] ?? '');
+                if ($testUrl === '' || !filter_var($testUrl, FILTER_VALIDATE_URL)) {
+                    echo json_encode(['code' => 400, 'error' => '请输入有效的视频 URL'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                $results = $feat->batchParse($testUrl);
+                if (count($results) >= 2) {
+                    $learned = $featDB->learn($testUrl, $results, 2);
+                    $report = "✅ 学习完成！\n";
+                    $report .= "正片域名：" . ($learned['content_domains'] ?? 0) . " 个\n";
+                    $report .= "广告域名：" . ($learned['ad_domains'] ?? 0) . " 个\n";
+                    $report .= "正片片段：" . ($learned['content_segments'] ?? 0) . " 条\n";
+                    $report .= "广告片段：" . ($learned['ad_segments'] ?? 0) . " 条\n";
+                    echo json_encode(['code' => 200, 'report' => $report, 'learned' => $learned], JSON_UNESCAPED_UNICODE);
+                } else {
+                    echo json_encode(['code' => 400, 'error' => '解析源不足2个，无法学习'], JSON_UNESCAPED_UNICODE);
+                }
+                exit;
+            }
+
+            if ($ajaxEarlyAction === 'ajax_feat_mark') {
+                $domain = strtolower(trim($_POST['domain'] ?? ''));
+                $type = trim($_POST['type'] ?? 'unknown');
+                if ($domain === '' || !preg_match('/^[a-z0-9\.\-]+$/i', $domain)) {
+                    echo json_encode(['code' => 400, 'error' => '无效域名'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                if (!in_array($type, ['content', 'ad', 'unknown'])) {
+                    echo json_encode(['code' => 400, 'error' => '无效类型'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                $featDB->markDomain($domain, $type);
+                $typeName = $type === 'content' ? '正片' : ($type === 'ad' ? '广告' : '未知');
+                echo json_encode(['code' => 200, 'domain' => $domain, 'type' => $type, 'type_name' => $typeName], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
         }
     }
     exit;
@@ -1159,6 +1264,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         <button data-tab="zjk" class="<?php echo $page==='zjk'?'active':''; ?>">📝 自定义接口</button>
         <button data-tab="test" class="<?php echo $page==='test'?'active':''; ?>">🧪 接口测试</button>
         <button data-tab="custom_algorithms" class="<?php echo $page==='custom_algorithms'?'active':''; ?>">🧩 算法</button>
+        <button data-tab="feat" class="<?php echo $page==='feat'?'active':''; ?>">🎯 规则2</button>
         <button data-tab="backup" class="<?php echo $page==='backup'?'active':''; ?>">💾 备份</button>
         <button data-tab="password" class="<?php echo $page==='password'?'active':''; ?>">🔐 密码</button>
         <button data-tab="setting" class="<?php echo $page==='setting'?'active':''; ?>">🛠️ 后台设置</button>
@@ -2050,6 +2156,121 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         </div>
     </div>
 
+    <!-- ===== 万能规则2 - 批量解析特征学习 ===== -->
+    <?php
+        $fc = $noadConfig;
+        $featEnabled = $fc['feat_enabled'] ?? true;
+        $featMaxSources = $fc['feat_max_sources'] ?? 3;
+        $featSourceTimeout = $fc['feat_source_timeout'] ?? 15;
+        $featTotalTimeout = $fc['feat_total_timeout'] ?? 60;
+        $featMinVotes = $fc['feat_min_votes'] ?? 2;
+        $featLowResource = $fc['feat_low_resource_mode'] ?? true;
+        $featMaxConcurrency = $fc['feat_max_concurrency'] ?? 2;
+        $featSampleCount = $fc['feat_sample_count'] ?? 15;
+        $featLearnEnabled = $fc['feat_learn_enabled'] ?? true;
+        $featUseProxy = $fc['feat_use_proxy'] ?? true;
+        $featDebug = $fc['feat_debug'] ?? false;
+    ?>
+    <div class="tab-panel <?php echo $page==='feat'?'active':''; ?>" id="tab-feat">
+        <h2>🎯 万能规则2 - 批量解析特征学习</h2>
+        <div class="panel">
+            <h3 style="margin-top:0;color:#10b981">核心原理</h3>
+            <p style="color:#666;font-size:13px;margin:6px 0;line-height:1.6">
+                <b>为什么能去广告？</b>专业去广告解析接口（如 jx.playerjy.com 等）返回的视频内容已经去除了广告片段。
+                通过向<b>多个</b>这类接口<b>并发解析同一个视频</b>，<b>对比它们返回的结果</b>，
+                出现在<b>多数解析源中的域名/片段</b>就是<b>正片内容</b>，
+                只出现在<b>少数/单个解析源中的域名/片段</b>就是<b>广告内容</b>。
+                <br><br>
+                <b>优点：</b>不需要下载 TS 文件、自动学习、跨资源站通用、与 MD5 规则互补。
+                <b>低资源优化：</b>默认并发=2、最多调用3个解析源、采样分析、超时保护，差服务器也能跑。
+            </p>
+            <form method="post">
+                <input type="hidden" name="action" value="save_noad_config">
+                <div class="grid-2">
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">⚙️ 核心开关</h4>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label><input type="checkbox" name="feat_enabled" <?php if ($featEnabled) echo 'checked'; ?>> 启用万能规则2（批量解析特征学习）</label>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label><input type="checkbox" name="feat_learn_enabled" <?php if ($featLearnEnabled) echo 'checked'; ?>> 启用自动学习（每次解析自动记录新特征）</label>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label><input type="checkbox" name="feat_low_resource_mode" <?php if ($featLowResource) echo 'checked'; ?>> 低资源模式（默认开启，差服务器必备）</label>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label><input type="checkbox" name="feat_use_proxy" <?php if ($featUseProxy) echo 'checked'; ?>> 启用代理池（降低 IP 被封禁风险）</label>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label><input type="checkbox" name="feat_debug" <?php if ($featDebug) echo 'checked'; ?>> 调试模式（返回详细学习信息）</label>
+                        </div>
+                    </div>
+
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🎯 识别精度</h4>
+                        <div style="padding:4px 0;font-size:14px"><label>最少投票数：
+                            <input type="number" name="feat_min_votes" min="2" max="5" step="1"
+                                value="<?php echo (int)$featMinVotes; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">至少几个解析源一致才信任（默认2，越大越保守）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px"><label>采样片段数：
+                            <input type="number" name="feat_sample_count" min="5" max="100" step="5"
+                                value="<?php echo (int)$featSampleCount; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">对每视频采样前 N 段学习（减少数据库写入）</div>
+                        </div>
+                    </div>
+
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🛡️ 服务器保护</h4>
+                        <div style="padding:4px 0;font-size:14px"><label>最大解析源数：
+                            <input type="number" name="feat_max_sources" min="2" max="10" step="1"
+                                value="<?php echo (int)$featMaxSources; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">最多调用多少个解析源（默认3，差服务器建议2）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px"><label>最大并发数：
+                            <input type="number" name="feat_max_concurrency" min="1" max="10" step="1"
+                                value="<?php echo (int)$featMaxConcurrency; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                            <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">并发请求上限（默认2，差服务器建议1）</div>
+                        </div>
+                        <div style="padding:4px 0;font-size:14px"><label>单源超时（秒）：
+                            <input type="number" name="feat_source_timeout" min="5" max="120" step="5"
+                                value="<?php echo (int)$featSourceTimeout; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                        <div style="padding:4px 0;font-size:14px"><label>总处理超时（秒）：
+                            <input type="number" name="feat_total_timeout" min="30" max="600" step="10"
+                                value="<?php echo (int)$featTotalTimeout; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                    </div>
+
+                    <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
+                        <h4 style="margin:0 0 12px 0;color:#444">🧠 手动标记工具</h4>
+                        <div style="padding:4px 0;font-size:14px">
+                            <label>手动标记域名：<br>
+                                <input type="text" name="mark_domain" placeholder="例：ad.example.com" style="width:240px;padding:6px;border:1px solid #ddd;border-radius:4px;margin-top:4px">
+                                <select name="mark_type" style="width:100px;padding:6px;border:1px solid #ddd;border-radius:4px;margin-left:4px">
+                                    <option value="content">正片</option>
+                                    <option value="ad">广告</option>
+                                    <option value="unknown">未知</option>
+                                </select>
+                                <button type="button" class="btn-primary-sm" onclick="featMarkDomain()" style="font-size:13px;padding:6px 14px;margin-left:4px;background:#6366f1">➕ 标记</button>
+                            </label>
+                        </div>
+                        <div id="featStatsPanel" style="margin-top:10px;padding:10px;background:#fff;border-radius:8px;border:1px solid #e5e7eb">
+                            <div style="font-size:12px;color:#888">点击下方「📊 查看特征库统计」查看当前特征库内容</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px;background:#10b981">💾 保存规则2参数</button>
+                    <button type="button" class="btn-primary-sm" onclick="featTestCurrent()" style="font-size:14px;padding:10px 24px;background:#4f46e5">🧪 测试当前参数</button>
+                    <button type="button" class="btn-primary-sm" onclick="featLearnCurrent()" style="font-size:14px;padding:10px 24px;background:#7c3aed">📚 学习特征</button>
+                    <button type="button" class="btn-primary-sm" onclick="featLoadStats()" style="font-size:14px;padding:10px 24px;background:#6366f1">📊 查看特征库</button>
+                    <button type="button" class="btn-primary-sm" onclick="featResetDefault()" style="font-size:14px;padding:10px 24px;background:#6b7280">↩ 恢复默认值</button>
+                </div>
+                <div id="featResult" style="margin-top:20px;padding:14px;background:#ecfdf5;border-radius:8px;color:#047857;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:30px">💡 点击按钮开始测试/学习...</div>
+            </form>
+        </div>
+    </div>
+
     <?php
     // ===== 16. 配置备份 =====
     ?>
@@ -2460,6 +2681,111 @@ function md5ResetDefault() {
         setTimeout(function() {
             try { md5LoadStats(); } catch (e) {}
         }, 3000);
+    }
+})();
+// ===== 万能规则2 - 测试当前参数 =====
+function featTestCurrent() {
+    var resultEl = document.getElementById('featResult');
+    resultEl.textContent = '🧪 正在批量调用解析接口分析视频...';
+    var sampleUrl = document.querySelector('input[name="ruyi_auto_optimize_sample_url"]').value.trim();
+    var formData = new FormData();
+    formData.append('action', 'ajax_feat_test');
+    if (sampleUrl) formData.append('test_url', sampleUrl);
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) resultEl.textContent = data.report;
+            else resultEl.textContent = '❌ ' + (data.error || '未知错误');
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== 万能规则2 - 加载特征库统计 =====
+function featLoadStats() {
+    var resultEl = document.getElementById('featResult');
+    var panelEl = document.getElementById('featStatsPanel');
+    resultEl.textContent = '📊 正在加载特征库统计...';
+    var formData = new FormData();
+    formData.append('action', 'ajax_feat_stats');
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                resultEl.textContent = data.report;
+                if (panelEl && data.report) {
+                    var lines = data.report.split('\n');
+                    if (lines.length > 0) panelEl.textContent = lines[0];
+                }
+            }
+            else resultEl.textContent = '❌ ' + (data.error || '未知错误');
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== 万能规则2 - 学习特征 =====
+function featLearnCurrent() {
+    var resultEl = document.getElementById('featResult');
+    resultEl.textContent = '📚 正在批量学习视频特征...';
+    var sampleUrl = document.querySelector('input[name="ruyi_auto_optimize_sample_url"]').value.trim();
+    var formData = new FormData();
+    formData.append('action', 'ajax_feat_learn');
+    if (sampleUrl) formData.append('test_url', sampleUrl);
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) resultEl.textContent = data.report;
+            else resultEl.textContent = '❌ ' + (data.error || '未知错误');
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== 万能规则2 - 手动标记域名 =====
+function featMarkDomain() {
+    var resultEl = document.getElementById('featResult');
+    var domain = document.querySelector('input[name="mark_domain"]').value.trim();
+    var type = document.querySelector('select[name="mark_type"]').value;
+    if (!domain) { alert('请输入要标记的域名'); return; }
+    resultEl.textContent = '➕ 正在标记 ' + domain + ' 为 ' + (type === 'content' ? '正片' : (type === 'ad' ? '广告' : '未知')) + '...';
+    var formData = new FormData();
+    formData.append('action', 'ajax_feat_mark');
+    formData.append('domain', domain);
+    formData.append('type', type);
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) resultEl.textContent = '✅ 已标记 ' + data.domain + ' 为 ' + data.type_name;
+            else resultEl.textContent = '❌ ' + (data.error || '未知错误');
+        })
+        .catch(function(e) { resultEl.textContent = '❌ 请求失败：' + e.message; });
+}
+// ===== 万能规则2 - 恢复默认参数 =====
+function featResetDefault() {
+    if (!confirm('确认恢复万能规则2的默认参数吗？\n当前修改将被覆盖。')) return;
+    var defaults = {
+        feat_max_sources: 3,
+        feat_source_timeout: 15,
+        feat_total_timeout: 60,
+        feat_min_votes: 2,
+        feat_max_concurrency: 2,
+        feat_sample_count: 15
+    };
+    for (var key in defaults) {
+        var input = document.querySelector('input[name="' + key + '"]');
+        if (input) input.value = defaults[key];
+    }
+    ['feat_enabled', 'feat_learn_enabled', 'feat_low_resource_mode', 'feat_use_proxy'].forEach(function(key) {
+        var el = document.querySelector('input[name="' + key + '"]');
+        if (el) el.checked = true;
+    });
+    document.getElementById('featResult').textContent = '↩ 已填充默认值，请点击「保存规则2参数」来生效';
+}
+// ===== 万能规则2 - 页面访问时自动加载特征库统计 =====
+(function() {
+    var featEnabled = <?php echo !empty($noadConfig['feat_enabled']) ? 'true' : 'false'; ?>;
+    if (!featEnabled) return;
+    var featLastKey = 'feat_last_stats_' + '<?php echo date('Y-m-d'); ?>';
+    if (!localStorage.getItem(featLastKey)) {
+        localStorage.setItem(featLastKey, '1');
+        setTimeout(function() {
+            try { featLoadStats(); } catch (e) {}
+        }, 3500);
     }
 })();
 </script>
