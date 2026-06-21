@@ -7,9 +7,38 @@
 
 class Requester {
     private $strategy;
+    private $noadConfig;       // v4.3: 同一份 noad 配置（代理 / 速率限制 / UA 等）
+    private static $lastRequestTimeByHost = []; // 同域名最小间隔
+    private static $sharedUserAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Android 14; Mobile; rv:124.0) Gecko/124.0 Firefox/124.0',
+        'Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+    ];
     
     public function __construct($strategy) {
         $this->strategy = $strategy;
+        // 加载 noad 配置（若文件存在）—— 用于代理 / 速率限制 / 随机 UA / 重试
+        $noadFile = __DIR__ . '/../config/noad.php';
+        if (file_exists($noadFile)) {
+            $this->noadConfig = require $noadFile;
+        } else {
+            $this->noadConfig = [
+                'enable_proxy' => false,
+                'proxies' => [],
+                'proxy_failover' => true,
+                'proxy_random_user_agent' => true,
+                'enable_rate_limit' => true,
+                'rate_limit_min_interval_ms' => 300,
+                'rate_limit_burst_jitter_ms' => 200,
+                'request_random_delay' => true,
+                'request_retry_on_failure' => 1,
+                'request_custom_headers' => [],
+            ];
+        }
     }
     
     /**
@@ -129,8 +158,12 @@ class Requester {
                 }
             }
             
-            // 短暂延迟，避免请求过快
-            usleep(100000); // 100ms
+            // 短暂延迟（v4.3 随机抖动，避免请求频率稳定被识别为爬虫）
+            if (!empty($this->noadConfig['request_random_delay'])) {
+                usleep(mt_rand(50000, 300000));
+            } else {
+                usleep(100000);
+            }
         }
         
         // 所有请求都失败
@@ -173,27 +206,76 @@ class Requester {
     }
     
     /**
-     * 创建CURL句柄
+     * 创建CURL句柄（v4.3 支持代理 / 随机 UA / 自定义 header / 速率限制）
      */
     private function createCurlHandle($url, $timeout) {
+        $host = parse_url($url, PHP_URL_HOST) ?: 'default';
+
+        // --- 速率限制：同域名保持最小间隔 ---
+        if (!empty($this->noadConfig['enable_rate_limit'])) {
+            $minMs  = (int)($this->noadConfig['rate_limit_min_interval_ms'] ?? 300);
+            $jitter = (int)($this->noadConfig['rate_limit_burst_jitter_ms'] ?? 200);
+            $nowMs  = (int)(microtime(true) * 1000);
+            if (isset(self::$lastRequestTimeByHost[$host])) {
+                $elapsed = $nowMs - self::$lastRequestTimeByHost[$host];
+                $need = $minMs + mt_rand(0, $jitter);
+                if ($elapsed < $need) {
+                    $sleep = (int)(($need - $elapsed) * 1000);
+                    if ($sleep > 0) usleep($sleep);
+                    $nowMs = (int)(microtime(true) * 1000);
+                }
+            }
+            self::$lastRequestTimeByHost[$host] = $nowMs;
+        }
+
         $ch = curl_init();
-        curl_setopt_array($ch, [
+        $opts = [
             CURLOPT_URL => $url,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => false,
             CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            CURLOPT_ENCODING => 'gzip,deflate',
+            CURLOPT_USERAGENT => $this->pickUserAgent(),
             CURLOPT_HTTPHEADER => [
-                'Content-type: application/json', 
-                'Accept: application/json',
-                'Referer: ' . parse_url($url, PHP_URL_SCHEME) . '://' . parse_url($url, PHP_URL_HOST)
-            ]
-        ]);
+                'Accept: application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+                'Referer: ' . (parse_url($url, PHP_URL_SCHEME) ?? 'https') . '://' . $host . '/',
+            ],
+        ];
+
+        // --- HTTP 代理 ---
+        if (!empty($this->noadConfig['enable_proxy']) && !empty($this->noadConfig['proxies'])) {
+            $pool = array_values($this->noadConfig['proxies']);
+            $candidate = $pool[mt_rand(0, count($pool) - 1)];
+            if (!empty($candidate)) {
+                $opts[CURLOPT_PROXY] = $candidate;
+                $opts[CURLOPT_PROXYTYPE] = (strpos($candidate, 'https://') === 0) ? CURLPROXY_HTTPS : CURLPROXY_HTTP;
+            }
+        }
+
+        // --- 自定义 header ---
+        if (!empty($this->noadConfig['request_custom_headers']) && is_array($this->noadConfig['request_custom_headers'])) {
+            foreach ($this->noadConfig['request_custom_headers'] as $k => $v) {
+                $opts[CURLOPT_HTTPHEADER][] = $k . ': ' . $v;
+            }
+        }
+
+        curl_setopt_array($ch, $opts);
         return $ch;
     }
-    
+
+    /** 随机 UA */
+    private function pickUserAgent() {
+        if (!empty($this->noadConfig['proxy_random_user_agent'])) {
+            $list = self::$sharedUserAgents;
+            return $list[mt_rand(0, count($list) - 1)];
+        }
+        return self::$sharedUserAgents[0];
+    }
+
     /**
      * 执行并发请求
      */
@@ -206,17 +288,41 @@ class Requester {
             }
         } while ($running > 0 && $status == CURLM_OK);
     }
-    
+
     /**
-     * 单次请求
+     * 单次请求（v4.3 支持失败自动重试 + 代理回退直连）
      */
     private function singleRequest($url, $timeout) {
-        $ch = $this->createCurlHandle($url, $timeout);
-        $result = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        
-        return ($httpCode == 200) ? $result : false;
+        $maxRetry = (int)($this->noadConfig['request_retry_on_failure'] ?? 0);
+        if ($maxRetry < 0) $maxRetry = 0;
+        $attempts = $maxRetry + 1;
+        $proxyWasOn = !empty($this->noadConfig['enable_proxy']) && !empty($this->noadConfig['proxies']);
+
+        for ($try = 0; $try < $attempts; $try++) {
+            if ($try > 0) usleep(100000 * $try + mt_rand(0, 100000));
+
+            $ch = $this->createCurlHandle($url, $timeout);
+            $result = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200 && $result !== false && $result !== '') {
+                return $result;
+            }
+
+            // 代理失败 → 临时禁用代理，下次重试走直连
+            if ($proxyWasOn && !empty($this->noadConfig['proxy_failover'])) {
+                $this->noadConfig['enable_proxy'] = false;
+                $proxyWasOn = false;
+                continue;
+            }
+
+            if ($httpCode === 429 || $httpCode >= 500) {
+                usleep(300000 + mt_rand(0, 300000));
+                continue;
+            }
+        }
+        return false;
     }
     
     /**

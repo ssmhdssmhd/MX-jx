@@ -151,6 +151,32 @@ return array(
     "enable_custom_algorithms" => true,        // 启用 /algorithms 目录下的自定义算法扩展
     "custom_algorithms_scope" => "all",        // 默认作用域: all / url / m3u8
 
+    // ========== HTTP 代理 & 反封禁（v4.3 新增）==========
+    // 说明: 支持多代理轮换，可避免短时间内对同一源请求过多而被封 IP
+    // 格式: "http://ip:port" 或 "http://user:pass@ip:port"
+    //   示例: "http://127.0.0.1:7890", "http://user:pass@proxy.example.com:8080"
+    "enable_proxy" => false,                   // 是否启用 HTTP 代理（默认关闭，自行填好代理再开）
+    "proxies" => array(                        // 多代理轮换池（启用时随机选择一个，可写多个）
+        // "http://127.0.0.1:7890",
+        // "http://127.0.0.1:10809",
+    ),
+    "proxy_failover" => true,                  // 若代理请求失败，自动退回到直连（避免因某个代理挂掉整体不可用）
+    "proxy_random_user_agent" => true,         // 随机化 UA（推荐开启，进一步降低被识别为爬虫）
+
+    // ========== 速率限制（v4.3 新增）==========
+    // 说明: 对同一个视频源 URL 的解析请求做最小间隔限制，避免过于频繁请求
+    "enable_rate_limit" => true,               // 是否启用速率限制
+    "rate_limit_min_interval_ms" => 350,       // 同域名最小请求间隔（毫秒），默认 350ms
+    "rate_limit_burst_jitter_ms" => 250,       // 额外随机抖动（毫秒），让请求间隔不均匀，更难识别
+    "rate_limit_concurrent_max" => 4,          // 同一时刻最大并发请求数（针对解析源，避免同时发太多）
+
+    // ========== 请求伪装（v4.3 新增）==========
+    "request_random_delay" => true,            // 顺序请求时每个请求之间加 50~250ms 随机延迟
+    "request_retry_on_failure" => 1,           // 请求失败自动重试次数（默认 1 次，可设 0 关闭）
+    "request_custom_headers" => array(         // 自定义请求头（可覆盖默认）
+        // "X-Custom-Header" => "value",
+    ),
+
     // ========== 预置资源站（后台会从配置 + 数据库合并）==========
     "resource_sites" => array(
         // 电影天堂 (dytt)

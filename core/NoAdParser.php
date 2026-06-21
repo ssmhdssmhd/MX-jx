@@ -22,6 +22,19 @@ class NoAdParser {
     private $whitelistCache;     // 白名单关键词本地缓存
     private $debug;
     private $registry;           // 自定义算法注册表（v4.2）
+    // ========== v4.3 反封禁 / 代理 / 速率限制 ==========
+    private static $lastRequestTimeByHost = [];  // 每个域名最近一次请求时间（ms）
+    private static $requestTokenBucket = [];     // 简单令牌桶：可用请求数
+    private static $sharedUserAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Android 14; Mobile; rv:124.0) Gecko/124.0 Firefox/124.0',
+        'Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:124.0) Gecko/20100101 Firefox/124.0',
+    ];
 
     public function __construct() {
         $this->config = require __DIR__ . '/../config/noad.php';
@@ -822,23 +835,124 @@ class NoAdParser {
             return false;
         }
         if (!function_exists('curl_init')) return false;
-        $ch = curl_init($url);
-        curl_setopt_array($ch, array(
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => (int)$timeout,
-            CURLOPT_CONNECTTIMEOUT => 3,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_USERAGENT      => 'Mozilla/5.0 NoAdParser/4.0',
-            CURLOPT_ENCODING       => 'gzip,deflate',
-            CURLOPT_REFERER        => $this->getBaseUrl($url),
-        ));
-        $body = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        if ($code !== 200 || $body === false) return false;
-        return $body;
+
+        $host = parse_url($url, PHP_URL_HOST) ?: 'default';
+
+        // --- 速率限制（令牌桶 + 最小间隔） ---
+        if (!empty($this->config['enable_rate_limit'])) {
+            $minMs  = (int)($this->config['rate_limit_min_interval_ms'] ?? 300);
+            $jitter = (int)($this->config['rate_limit_burst_jitter_ms'] ?? 200);
+            $nowMs  = (int)(microtime(true) * 1000);
+            if (isset(self::$lastRequestTimeByHost[$host])) {
+                $elapsed = $nowMs - self::$lastRequestTimeByHost[$host];
+                $need    = $minMs + mt_rand(0, $jitter);
+                if ($elapsed < $need) {
+                    $sleepUs = (int)(($need - $elapsed) * 1000);
+                    if ($sleepUs > 0) {
+                        // 避免单次 sleep 过长，分成最多 3 段
+                        $chunks = 3;
+                        $chunkUs = (int)($sleepUs / $chunks);
+                        for ($i = 0; $i < $chunks; $i++) {
+                            if ($chunkUs > 0) usleep($chunkUs);
+                        }
+                        $nowMs = (int)(microtime(true) * 1000);
+                    }
+                }
+            }
+            self::$lastRequestTimeByHost[$host] = $nowMs;
+        }
+
+        $maxRetry = (int)($this->config['request_retry_on_failure'] ?? 0);
+        if ($maxRetry < 0) $maxRetry = 0;
+        $attempts = $maxRetry + 1;
+        $lastBody = false;
+        $lastCode = 0;
+
+        for ($try = 0; $try < $attempts; $try++) {
+            // 失败重试之间的额外延迟
+            if ($try > 0) {
+                $sleep = 100000 * $try + mt_rand(0, 100000);
+                if ($sleep > 0) usleep($sleep);
+            }
+
+            $ch = curl_init($url);
+            $opts = [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => (int)$timeout,
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => false,
+                CURLOPT_USERAGENT      => $this->pickUserAgent(),
+                CURLOPT_ENCODING       => 'gzip,deflate',
+                CURLOPT_REFERER        => $this->getBaseUrl($url),
+                CURLOPT_HTTPHEADER     => [
+                    'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+                ],
+            ];
+
+            // --- 应用代理（多代理池随机 + 失败自动切换到直连） ---
+            $proxyApplied = false;
+            if (!empty($this->config['enable_proxy']) && !empty($this->config['proxies'])) {
+                $pool = array_values($this->config['proxies']);
+                $candidate = $pool[mt_rand(0, count($pool) - 1)];
+                if (!empty($candidate)) {
+                    $opts[CURLOPT_PROXY] = $candidate;
+                    if (strpos($candidate, 'https://') === 0) {
+                        $opts[CURLOPT_PROXYTYPE] = CURLPROXY_HTTPS;
+                    } else {
+                        $opts[CURLOPT_PROXYTYPE] = CURLPROXY_HTTP;
+                    }
+                    $proxyApplied = true;
+                }
+            }
+
+            // --- 自定义请求头合并 ---
+            if (!empty($this->config['request_custom_headers']) && is_array($this->config['request_custom_headers'])) {
+                $extra = [];
+                foreach ($this->config['request_custom_headers'] as $k => $v) {
+                    $extra[] = $k . ': ' . $v;
+                }
+                $opts[CURLOPT_HTTPHEADER] = array_merge($opts[CURLOPT_HTTPHEADER], $extra);
+            }
+
+            curl_setopt_array($ch, $opts);
+            $body = curl_exec($ch);
+            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $err = curl_error($ch);
+            curl_close($ch);
+
+            $lastBody = $body;
+            $lastCode = $code;
+
+            if ($code === 200 && $body !== false && $body !== '') {
+                return $body;
+            }
+
+            // 代理失败且开启失败回退：下一次重试关闭代理，走直连
+            if ($proxyApplied && !empty($this->config['proxy_failover'])) {
+                $this->config['enable_proxy'] = false;  // 临时关闭，避免后续请求也走坏代理
+                continue;
+            }
+
+            // 服务器限流（429）或 5xx：再试一次（若还允许重试）
+            if ($code === 429 || $code >= 500) {
+                usleep(300000 + mt_rand(0, 300000));
+                continue;
+            }
+        }
+
+        return ($lastCode === 200 && $lastBody !== false && $lastBody !== '') ? $lastBody : false;
+    }
+
+    /** 随机挑选一个 UA（避免所有请求都用同一个 UA 被识别为爬虫） */
+    private function pickUserAgent() {
+        if (!empty($this->config['proxy_random_user_agent'])) {
+            $list = self::$sharedUserAgents;
+            return $list[mt_rand(0, count($list) - 1)];
+        }
+        return self::$sharedUserAgents[0];
     }
 
     private function getBaseUrl($url) {

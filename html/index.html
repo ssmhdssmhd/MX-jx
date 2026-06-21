@@ -3,376 +3,262 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>沫兮万能解析 - 视频在线解析</title>
+<title>沫兮万能解析 · NoAd 去广告 v4.3</title>
+<meta name="description" content="PHP 智能线路切换 + NoAd 去广告解析系统：M3U8 广告片段智能识别过滤、多源自动匹配、缓存加速、HTTP 代理支持。">
 <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        min-height: 100vh;
-        padding: 40px 20px;
-        color: #333;
-    }
-    .container {
-        max-width: 900px;
-        margin: 0 auto;
-    }
-    .header {
-        text-align: center;
-        color: #fff;
-        margin-bottom: 40px;
-    }
-    .header h1 { font-size: 32px; margin-bottom: 10px; }
-    .header p { font-size: 15px; opacity: 0.9; }
-    .card {
-        background: #fff;
-        border-radius: 16px;
-        padding: 30px;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-        margin-bottom: 20px;
-    }
-    .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
-    input[type="text"] {
-        flex: 1;
-        padding: 14px 18px;
-        border: 2px solid #e0e0e0;
-        border-radius: 10px;
-        font-size: 15px;
-        outline: none;
-        transition: border-color 0.2s;
-    }
-    input[type="text"]:focus { border-color: #667eea; }
-    button {
-        padding: 14px 28px;
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        color: #fff;
-        border: none;
-        border-radius: 10px;
-        font-size: 15px;
-        cursor: pointer;
-        transition: transform 0.1s, box-shadow 0.2s;
-    }
-    button:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(102,126,234,0.4); }
-    button:active { transform: translateY(0); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-    .quick-links { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
-    .quick-links button {
-        padding: 6px 14px;
-        background: #f0f0f0;
-        color: #555;
-        font-size: 13px;
-        border-radius: 20px;
-    }
-    .quick-links button:hover { background: #e0e0e0; box-shadow: none; }
-    .result { margin-top: 20px; }
-    .result-item {
-        padding: 15px;
-        background: #f8f9fa;
-        border-radius: 10px;
-        margin-bottom: 10px;
-        word-break: break-all;
-    }
-    .result-item.success { background: #e8f5e9; border-left: 4px solid #4caf50; }
-    .result-item.error { background: #ffebee; border-left: 4px solid #f44336; }
-    .result-item.loading { background: #e3f2fd; border-left: 4px solid #2196f3; }
-    /* 广告分析信息 */
-    .ad-info {
-        margin-top: 12px;
-        padding: 12px 14px;
-        background: linear-gradient(135deg, #fff3e0, #fff8e1);
-        border-radius: 8px;
-        border: 1px solid #ffe0b2;
-        font-size: 13px;
-    }
-    .ad-info-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 8px;
-    }
-    .ad-info-title { font-weight: 600; color: #e65100; font-size: 13px; }
-    .ad-badge {
-        display: inline-block;
-        padding: 2px 10px;
-        border-radius: 12px;
-        font-size: 11px;
-        font-weight: 600;
-    }
-    .ad-badge.clean { background: #c8e6c9; color: #2e7d32; }
-    .ad-badge.partial { background: #fff9c4; color: #f57f17; }
-    .ad-stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
-    .ad-stat { color: #555; }
-    .ad-stat strong { color: #e65100; font-weight: 600; }
-    .ad-stat span { font-size: 12px; color: #888; }
-    .rules-toggle {
-        font-size: 12px;
-        color: #e65100;
-        cursor: pointer;
-        user-select: none;
-        padding: 4px 10px;
-        background: #fff3e0;
-        border-radius: 4px;
-        border: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-    }
-    .rules-toggle:hover { background: #ffe0b2; }
-    .rules-panel {
-        display: none;
-        margin-top: 10px;
-        padding: 10px;
-        background: #fff;
-        border-radius: 6px;
-        border: 1px solid #eee;
-        font-size: 12px;
-    }
-    .rules-panel.open { display: block; }
-    .rules-panel h4 { font-size: 12px; color: #888; margin-bottom: 6px; margin-top: 8px; }
-    .rules-panel h4:first-child { margin-top: 0; }
-    .rule-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-    .rule-tag {
-        padding: 2px 8px;
-        background: #ffebee;
-        color: #c62828;
-        border-radius: 4px;
-        font-size: 11px;
-        font-family: monospace;
-    }
-    .rule-tag.safe {
-        background: #e8f5e9;
-        color: #2e7d32;
-    }
-    .result-label { font-size: 12px; color: #666; margin-bottom: 5px; }
-    .result-url { font-family: monospace; font-size: 13px; color: #333; }
-    .result-actions { margin-top: 10px; display: flex; gap: 8px; }
-    .result-actions button {
-        padding: 6px 14px;
-        background: #fff;
-        color: #667eea;
-        border: 1px solid #667eea;
-        font-size: 12px;
-        border-radius: 6px;
-    }
-    .result-actions button:hover { background: #667eea; color: #fff; }
-    .nav-links { margin-top: 30px; text-align: center; color: #fff; font-size: 14px; }
-    .nav-links a { color: #fff; margin: 0 10px; text-decoration: none; opacity: 0.85; }
-    .nav-links a:hover { opacity: 1; text-decoration: underline; }
-    .footer { text-align: center; color: rgba(255,255,255,0.7); font-size: 12px; margin-top: 40px; }
-    pre { background: #2d2d2d; color: #ccc; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+.container { max-width: 1080px; margin: 0 auto; padding: 40px 20px; }
+header { text-align: center; margin-bottom: 32px; }
+header h1 { font-size: 36px; font-weight: 700; background: linear-gradient(90deg, #60a5fa, #a78bfa, #f472b6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+header p { color: #94a3b8; margin-top: 10px; }
+.tag { display: inline-block; padding: 4px 10px; background: rgba(96,165,250,.15); color: #60a5fa; border-radius: 999px; font-size: 12px; margin: 12px 4px 0; }
+
+.panel { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 10px 40px -10px rgba(0,0,0,.3); }
+.panel h2 { font-size: 18px; margin-bottom: 16px; color: #cbd5e1; }
+
+.input-row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+input[type="text"], input[type="url"] { flex: 1; min-width: 280px; padding: 12px 14px; background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 10px; font-size: 14px; transition: border-color .15s; }
+input[type="text"]:focus, input[type="url"]:focus { outline: none; border-color: #60a5fa; background: #111827; }
+
+.btn { padding: 12px 20px; background: linear-gradient(135deg, #3b82f6, #6366f1); color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .1s, box-shadow .15s; }
+.btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59, 130, 246, .35); }
+.btn:active { transform: translateY(0); }
+.btn-secondary { background: linear-gradient(135deg, #475569, #334155); }
+.btn-small { padding: 8px 14px; font-size: 13px; }
+
+.mode-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.mode-tab { padding: 8px 16px; background: #0f172a; border: 1px solid #334155; color: #94a3b8; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all .15s; }
+.mode-tab.active { background: linear-gradient(135deg, #3b82f6, #6366f1); color: white; border-color: transparent; }
+.mode-tab:hover { border-color: #60a5fa; color: #e2e8f0; }
+
+.status { padding: 12px 16px; border-radius: 10px; margin-top: 12px; font-size: 13px; display: none; }
+.status.show { display: block; }
+.status.loading { background: rgba(59,130,246,.15); color: #60a5fa; border: 1px solid rgba(59,130,246,.3); }
+.status.success { background: rgba(34,197,94,.15); color: #22c55e; border: 1px solid rgba(34,197,94,.3); }
+.status.error { background: rgba(239,68,68,.15); color: #f87171; border: 1px solid rgba(239,68,68,.3); }
+
+.result-box { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-top: 16px; font-family: "SF Mono", "Consolas", monospace; font-size: 13px; word-break: break-all; }
+.result-box pre { white-space: pre-wrap; color: #94a3b8; line-height: 1.6; }
+.result-meta { display: flex; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; font-size: 12px; color: #64748b; }
+.result-meta span strong { color: #e2e8f0; font-weight: 500; }
+
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 20px; }
+.feature { background: #0f172a; border: 1px solid #334155; padding: 18px; border-radius: 12px; }
+.feature-icon { font-size: 28px; margin-bottom: 8px; }
+.feature h3 { font-size: 15px; color: #e2e8f0; margin-bottom: 6px; }
+.feature p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+
+.quick-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.quick-links a { color: #60a5fa; text-decoration: none; padding: 6px 12px; border: 1px solid #334155; border-radius: 8px; font-size: 13px; transition: all .15s; }
+.quick-links a:hover { border-color: #60a5fa; background: rgba(96,165,250,.08); }
+
+footer { text-align: center; margin-top: 32px; padding: 20px 0; color: #64748b; font-size: 13px; border-top: 1px solid #334155; }
+
+/* M3U8 parser result */
+.segment-list { max-height: 420px; overflow-y: auto; margin-top: 10px; font-size: 12px; }
+.segment-row { display: flex; align-items: center; padding: 6px 10px; border-bottom: 1px solid #1e293b; }
+.segment-row .idx { width: 40px; color: #64748b; }
+.segment-row .dur { width: 60px; color: #94a3b8; }
+.segment-row .url { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #94a3b8; font-size: 11px; }
+.segment-row.ad { background: rgba(239,68,68,.12); }
+.segment-row.ad .url { color: #f87171; }
+.segment-row .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.segment-row .badge.ad { background: #dc2626; color: white; }
+.segment-row .badge.keep { background: #16a34a; color: white; }
 </style>
 </head>
 <body>
 <div class="container">
-    <div class="header">
-        <h1>🎬 沫兮万能解析</h1>
-        <p>多线路视频在线解析 · 智能选优 · M3U8 直链</p>
-    </div>
+    <header>
+        <h1>🎬 沫兮万能解析 · NoAd 去广告</h1>
+        <p>多源自动匹配 · 广告片段智能过滤 · HTTP 代理支持 · M3U8 自动清洗</p>
+        <span class="tag">v4.3.0</span>
+        <span class="tag">PHP 7.4+ / 8.x</span>
+        <span class="tag">Layui 后台</span>
+        <span class="tag">自定义算法扩展</span>
+    </header>
 
-    <div class="card">
-        <div class="input-group">
-            <input type="text" id="videoUrl" placeholder="粘贴视频链接（腾讯视频、爱奇艺、抖音...）或 M3U8 直链">
-            <button id="parseBtn" onclick="parseVideo()">🔍 解析</button>
+    <div class="panel">
+        <h2>🚀 快速解析</h2>
+        <div class="mode-tabs">
+            <button class="mode-tab active" data-mode="auto">🤖 自动（推荐）</button>
+            <button class="mode-tab" data-mode="noad">🛡 NoAd 去广告</button>
+            <button class="mode-tab" data-mode="legacy">📡 多源并发</button>
+            <button class="mode-tab" data-mode="m3u8">📺 M3U8 清洗</button>
         </div>
+        <div class="input-row">
+            <input id="videoUrl" type="url" placeholder="粘贴视频播放地址（https://... / .m3u8）">
+            <button class="btn" id="btnParse">▶ 开始解析</button>
+        </div>
+        <div class="status" id="status"></div>
+
+        <div id="result" class="result-box" style="display:none;">
+            <div class="result-meta">
+                <span>模式：<strong id="rMode">—</strong></span>
+                <span>响应时长：<strong id="rTime">—</strong></span>
+                <span>广告片段：<strong id="rAds">—</strong></span>
+                <span>保留片段：<strong id="rKeep">—</strong></span>
+            </div>
+            <pre id="rRaw">等待解析结果...</pre>
+            <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-small" id="btnCopy">📋 复制播放地址</button>
+                <button class="btn btn-small btn-secondary" id="btnPlayer">▶ 打开播放器</button>
+                <button class="btn btn-small btn-secondary" id="btnRawM3u8">📄 查看清洗后的 M3U8</button>
+            </div>
+        </div>
+
         <div class="quick-links">
-            <span style="color:#888;font-size:13px;line-height:28px;">快速填写：</span>
-            <button onclick="fillDemo('https://v.qq.com/x/cover/mzc00200mp8vo9l/r00421m6n7k.html')">腾讯视频示例</button>
-            <button onclick="fillDemo('https://www.iqiyi.com/v_example.html')">爱奇艺示例</button>
-            <button onclick="fillDemo('https://v.douyin.com/demo/')">抖音示例</button>
-            <button onclick="fillDemo('')">清空</button>
+            <a href="player.html" target="_blank">🎬 HLS 播放器</a>
+            <a href="m3u8-test.html" target="_blank">🧪 M3U8 调试台</a>
+            <a href="../admin.php" target="_blank">⚙ 管理后台（密码：admin123）</a>
+            <a href="../noad_proxy.php?mode=algorithms&a=list" target="_blank">🧩 算法状态</a>
         </div>
-        <div id="result" class="result"></div>
     </div>
 
-    <div class="nav-links">
-        <a href="player.html">▶️ 播放器</a>
-        <a href="api-test.html">🧪 API 调试</a>
-        <a href="m3u8-test.html">📺 M3U8 测试</a>
+    <div class="panel">
+        <h2>✨ 核心能力</h2>
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">🛡</div>
+                <h3>广告片段智能识别</h3>
+                <p>自动扫描 M3U8 播放列表，识别并剔除广告片段，保留正片内容。</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🌐</div>
+                <h3>多源自动匹配</h3>
+                <p>并发请求多个解析源，自动选择最快有效响应，提高解析成功率。</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🚀</div>
+                <h3>缓存加速</h3>
+                <p>相同请求命中缓存直接返回，响应速度毫秒级，降低对上游依赖。</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔐</div>
+                <h3>HTTP 代理与反封禁</h3>
+                <p>支持多代理池轮换 + 速率限制 + 随机 UA + 失败重试，防止被源站封 IP。</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🧩</div>
+                <h3>自定义算法扩展</h3>
+                <p>在 algorithms/ 目录下编写 PHP 类，即可实现自定义 URL / M3U8 处理规则。</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">📊</div>
+                <h3>可视化后台管理</h3>
+                <p>Layui 后台可管理解析源、广告关键词库、资源站点，并查看访问统计。</p>
+            </div>
+        </div>
     </div>
 
-    <div class="footer">
-        © MX 射手沫蝴蝶 · 仅供学习交流使用
-    </div>
+    <footer>
+        MX-射手沫蝴蝶 · <a href="../admin.php" style="color:#60a5fa;">管理后台</a> · PHP Smart Router NoAd v4.3
+    </footer>
 </div>
 
 <script>
-const API_URL = '../index.php';
-const NOAD_API = '../noad_proxy.php?mode=api';
-const RULES_API = '../noad_proxy.php?mode=rules';
-let cachedRules = null;
+(function () {
+    var currentMode = 'auto';
+    var lastResult = { url: '', m3u8: '' };
 
-function fillDemo(url) {
-    document.getElementById('videoUrl').value = url;
-}
-
-// 加载去广告规则（缓存）
-function loadAdRules() {
-    if (cachedRules) return Promise.resolve(cachedRules);
-    return fetch(RULES_API)
-        .then(r => r.json())
-        .then(data => { cachedRules = data; return data; })
-        .catch(() => null);
-}
-
-// 格式化规则列表为标签
-function renderRuleTags(keywords, isSafe) {
-    return keywords.map(k =>
-        `<span class="rule-tag${isSafe ? ' safe' : ''}">${k}</span>`
-    ).join('');
-}
-
-// 渲染广告分析信息面板
-function renderAdInfo(data, rules) {
-    const total = data.total_segments || 0;
-    const removed = data.ad_removed || 0;
-    const kept = total - removed;
-    const badge = removed > 0
-        ? `<span class="ad-badge partial">🚫 去广告 ${removed} 个片段</span>`
-        : `<span class="ad-badge clean">✅ 无广告片段</span>`;
-
-    let rulesHtml = '';
-    if (rules) {
-        rulesHtml = `
-            <div class="rules-panel" id="rulesPanel">
-                <h4>🚫 广告识别关键词（命中则过滤）</h4>
-                <div class="rule-tags">${renderRuleTags((rules.ad_keywords || []).slice(0, 30), false)}</div>
-                ${(rules.ad_keywords || []).length > 30 ? `<span style="color:#999;font-size:11px;">... 等共 ${rules.ad_keywords.length} 个关键词</span>` : ''}
-                <h4>✅ 白名单关键词（无论是否命中广告规则都会被保留）</h4>
-                <div class="rule-tags">${renderRuleTags((rules.whitelist_keywords || []).slice(0, 30), true)}</div>
-                ${(rules.whitelist_keywords || []).length > 30 ? `<span style="color:#999;font-size:11px;">... 等共 ${rules.whitelist_keywords.length} 个白名单词</span>` : ''}
-            </div>`;
-    }
-
-    return `
-        <div class="ad-info">
-            <div class="ad-info-header">
-                <span class="ad-info-title">📊 广告片段分析</span>
-                ${badge}
-            </div>
-            <div class="ad-stats">
-                <div class="ad-stat">总片段: <strong>${total}</strong> <span>个</span></div>
-                <div class="ad-stat">去广告: <strong>${removed}</strong> <span>个</span></div>
-                <div class="ad-stat">保留: <strong>${kept}</strong> <span>个</span></div>
-                <div class="ad-stat">来源: <strong>${data.from_source || '—'}</strong></div>
-                ${data.response_time ? `<div class="ad-stat">耗时: <strong>${data.response_time}ms</strong></div>` : ''}
-                ${data.from_cache ? `<div class="ad-stat"><span style="background:#e3f2fd;padding:1px 6px;border-radius:4px;color:#1565c0;">📦 缓存</span></div>` : ''}
-            </div>
-            ${rulesHtml ? `
-            <button class="rules-toggle" onclick="toggleRules()">
-                📋 查看去广告规则详情 ${rules ? `(${rules.ad_keywords.length} 广告词 + ${rules.whitelist_keywords.length} 白名单)` : ''}
-                <span id="rulesArrow">▼</span>
-            </button>` : ''}
-        </div>
-    `;
-}
-
-function toggleRules() {
-    const panel = document.getElementById('rulesPanel');
-    const arrow = document.getElementById('rulesArrow');
-    if (panel) {
-        panel.classList.toggle('open');
-        if (arrow) arrow.textContent = panel.classList.contains('open') ? '▲' : '▼';
-    }
-}
-
-function parseVideo() {
-    const url = document.getElementById('videoUrl').value.trim();
-    const resultEl = document.getElementById('result');
-    const btn = document.getElementById('parseBtn');
-
-    if (!url) {
-        resultEl.innerHTML = '<div class="result-item error"><div class="result-label">⚠️ 错误</div><div class="result-url">请输入视频链接</div></div>';
-        return;
-    }
-
-    btn.disabled = true;
-    btn.textContent = '⏳ 解析中...';
-    resultEl.innerHTML = '<div class="result-item loading"><div class="result-label">🔄 请求中</div><div class="result-url">正在通过多线路解析，请稍候...</div></div>';
-
-    const startTime = Date.now();
-
-    fetch(`${NOAD_API}&url=${encodeURIComponent(url)}`)
-        .then(r => r.text())
-        .then(text => {
-            let data;
-            try { data = JSON.parse(text); } catch(e) { data = { msg: text, code: 200 }; }
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-
-            if (data && (data.code === 200 || data.msg)) {
-                const playUrl = data.url || data.msg || '';
-                const isM3u8 = playUrl.includes('.m3u8') || playUrl.includes('m3u8');
-
-                // 加载规则并渲染完整结果
-                loadAdRules().then(rules => {
-                    const adInfo = (data.total_segments !== undefined || data.ad_removed !== undefined)
-                        ? renderAdInfo(data, rules)
-                        : '';
-
-                    resultEl.innerHTML = `
-                        <div class="result-item success">
-                            <div class="result-label">✅ 解析成功 · 耗时 ${elapsed}s ${data.strategy ? '· ' + data.strategy : ''}</div>
-                            <div class="result-url">${playUrl}</div>
-                            <div class="result-actions">
-                                ${isM3u8 ? `<button onclick="playInPlayer('${playUrl}')">▶️ 播放</button>` : ''}
-                                <button onclick="copyText('${playUrl}')">📋 复制</button>
-                                <button onclick="window.open('${playUrl}', '_blank')">🔗 新窗口</button>
-                            </div>
-                            ${adInfo}
-                        </div>
-                    `;
-                });
-            } else {
-                // 后端解析失败，降级到 index.php
-                resultEl.innerHTML = '<div class="result-item loading"><div class="result-label">🔄 后端解析失败，尝试备用解析...</div></div>';
-                fetch(`${API_URL}?url=${encodeURIComponent(url)}`)
-                    .then(r => r.text())
-                    .then(text2 => {
-                        let data2;
-                        try { data2 = JSON.parse(text2); } catch(e) { data2 = { msg: text2, code: 200 }; }
-                        const playUrl2 = data2.url || data2.msg || '';
-                        const isM3u8 = playUrl2.includes('.m3u8') || playUrl2.includes('m3u8');
-                        if (data2.code === 200 || data2.msg) {
-                            resultEl.innerHTML = `
-                                <div class="result-item success">
-                                    <div class="result-label">✅ 解析成功（备用） · 耗时 ${((Date.now()-startTime)/1000).toFixed(2)}s</div>
-                                    <div class="result-url">${playUrl2}</div>
-                                    <div class="result-actions">
-                                        ${isM3u8 ? `<button onclick="playInPlayer('${playUrl2}')">▶️ 播放</button>` : ''}
-                                        <button onclick="copyText('${playUrl2}')">📋 复制</button>
-                                        <button onclick="window.open('${playUrl2}', '_blank')">🔗 新窗口</button>
-                                    </div>
-                                </div>`;
-                        } else {
-                            resultEl.innerHTML = `<div class="result-item error"><div class="result-label">❌ 所有解析均失败</div><pre>${(data2.msg || text2).slice(0, 500)}</pre></div>`;
-                        }
-                    });
-            }
-        })
-        .catch(err => {
-            resultEl.innerHTML = `<div class="result-item error"><div class="result-label">❌ 请求失败</div><div class="result-url">${err.message}</div></div>`;
-        })
-        .finally(() => {
-            btn.disabled = false;
-            btn.textContent = '🔍 解析';
+    document.querySelectorAll('.mode-tab').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            document.querySelectorAll('.mode-tab').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            currentMode = btn.dataset.mode;
         });
-}
-
-function playInPlayer(url) {
-    window.location.href = `player.html?src=${encodeURIComponent(url)}`;
-}
-
-function copyText(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        const btn = event.target;
-        const orig = btn.textContent;
-        btn.textContent = '✅ 已复制';
-        setTimeout(() => btn.textContent = orig, 1500);
     });
-}
 
-document.getElementById('videoUrl').addEventListener('keypress', e => {
-    if (e.key === 'Enter') parseVideo();
-});
+    function setStatus(text, type) {
+        var el = document.getElementById('status');
+        el.textContent = text;
+        el.className = 'status show ' + (type || '');
+    }
+
+    function showResult(data, elapsed) {
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('rMode').textContent = { auto: '自动', noad: 'NoAd 去广告', legacy: '多源并发', m3u8: 'M3U8 清洗' }[currentMode];
+        document.getElementById('rTime').textContent = elapsed + ' ms';
+        document.getElementById('rAds').textContent = data.ad_count ?? '—';
+        document.getElementById('rKeep').textContent = data.keep_count ?? '—';
+        var rawUrl = data.url || data.m3u8 || (data.data && (data.data.m3u8 || data.data.url)) || '';
+        lastResult.url = rawUrl;
+        lastResult.m3u8 = data.clean_m3u8 || '';
+        document.getElementById('rRaw').textContent = JSON.stringify(data, null, 2);
+    }
+
+    document.getElementById('btnParse').addEventListener('click', function () {
+        var url = document.getElementById('videoUrl').value.trim();
+        if (!url) { setStatus('请先输入视频或 M3U8 地址', 'error'); return; }
+        setStatus('正在解析中...（若启用代理会稍慢）', 'loading');
+        var started = Date.now();
+        var endpoint;
+        if (currentMode === 'm3u8') {
+            // 走 noad_proxy 清洗 M3U8
+            endpoint = '../noad_proxy.php?mode=m3u8&src=' + encodeURIComponent(url);
+            fetch(endpoint).then(function (r) { return r.text(); }).then(function (m3u8Text) {
+                var elapsed = Date.now() - started;
+                if (!m3u8Text || m3u8Text.indexOf('#EXTM3U') === -1) {
+                    setStatus('解析失败：返回内容非 M3U8', 'error');
+                    return;
+                }
+                setStatus('解析成功，已清洗广告片段', 'success');
+                // 简单片段计数
+                var segMatches = m3u8Text.match(/#EXTINF:[^\r\n]+/g) || [];
+                showResult({
+                    ad_count: 0, keep_count: segMatches.length,
+                    clean_m3u8: m3u8Text,
+                    url: location.protocol + '//' + location.host + '/MX-jx/noad_proxy.php?mode=m3u8&src=' + encodeURIComponent(url)
+                }, elapsed);
+            }).catch(function (e) { setStatus('请求失败：' + e.message, 'error'); });
+            return;
+        }
+        endpoint = '../index.php?mode=' + encodeURIComponent(currentMode) + '&url=' + encodeURIComponent(url);
+        fetch(endpoint).then(function (r) { return r.json(); }).then(function (data) {
+            var elapsed = Date.now() - started;
+            if (data && (data.code === 200 || data.url || data.m3u8)) {
+                setStatus('✅ 解析成功（' + elapsed + 'ms）', 'success');
+                showResult(data, elapsed);
+            } else {
+                setStatus('❌ 解析失败：' + (data.msg || JSON.stringify(data)), 'error');
+            }
+        }).catch(function (e) { setStatus('请求失败：' + e.message, 'error'); });
+    });
+
+    document.getElementById('btnCopy').addEventListener('click', function () {
+        var text = lastResult.m3u8 || lastResult.url || '';
+        if (!text) { alert('暂无解析结果'); return; }
+        navigator.clipboard.writeText(text).then(function () {
+            var old = document.getElementById('btnCopy').textContent;
+            document.getElementById('btnCopy').textContent = '✅ 已复制';
+            setTimeout(function () { document.getElementById('btnCopy').textContent = old; }, 1500);
+        });
+    });
+
+    document.getElementById('btnPlayer').addEventListener('click', function () {
+        var url = lastResult.url || lastResult.m3u8 || '';
+        if (!url) { alert('暂无解析结果'); return; }
+        window.open('player.html?src=' + encodeURIComponent(url));
+    });
+
+    document.getElementById('btnRawM3u8').addEventListener('click', function () {
+        if (lastResult.m3u8) {
+            var blob = new Blob([lastResult.m3u8], { type: 'application/vnd.apple.mpegurl' });
+            var u = URL.createObjectURL(blob);
+            window.open(u);
+        } else if (lastResult.url) {
+            window.open(lastResult.url);
+        } else {
+            alert('暂无解析结果');
+        }
+    });
+
+    // 允许回车触发
+    document.getElementById('videoUrl').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') document.getElementById('btnParse').click();
+    });
+})();
 </script>
 </body>
 </html>
