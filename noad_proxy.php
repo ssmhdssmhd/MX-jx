@@ -37,6 +37,21 @@ switch ($mode) {
         $parser->serveTs($src);
         exit;
 
+    case 'rules':
+        // 返回当前去广告规则（供前端展示）
+        header('Content-Type: application/json; charset=utf-8');
+        header('Access-Control-Allow-Origin: *');
+        header('Cache-Control: max-age=300');
+        echo json_encode(array(
+            'code' => 200,
+            'ad_keywords' => $noadCfg['ad_keywords'] ?? array(),
+            'whitelist_keywords' => $noadCfg['whitelist_keywords'] ?? array(),
+            'ad_keyword_threshold' => $noadCfg['ad_keyword_threshold'] ?? 1,
+            'ad_filter_enabled' => !empty($noadCfg['enable_ad_filter']),
+            'ts_proxy_enabled' => !empty($noadCfg['enable_ts_proxy']),
+        ), JSON_UNESCAPED_UNICODE);
+        exit;
+
     case 'api':
     default:
         if ($url === '') {
