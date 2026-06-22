@@ -1381,21 +1381,14 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         <button data-tab="sites" class="<?php echo $page==='sites'?'active':''; ?>">🔗 资源站点</button>
         <button data-tab="parse_log" class="<?php echo $page==='parse_log'?'active':''; ?>">📄 解析日志</button>
         <button data-tab="cache_mgr" class="<?php echo $page==='cache_mgr'?'active':''; ?>">💽 缓存管理</button>
-        <button data-tab="noad_stats" class="<?php echo $page==='noad_stats'?'active':''; ?>">📈 NoAd 统计</button>
-        <button data-tab="noad_sources" class="<?php echo $page==='noad_sources'?'active':''; ?>">🔌 解析源</button>
-        <button data-tab="noad_rules" class="<?php echo $page==='noad_rules'?'active':''; ?>">🚫 广告规则</button>
-        <button data-tab="noad_config" class="<?php echo $page==='noad_config'?'active':''; ?>">⚙️ NoAd 设置</button>
+        <button data-tab="ad_center" class="<?php echo $page==='ad_center'?'active':''; ?>">📌 智能去广告</button>
         <button data-tab="api" class="<?php echo $page==='api'?'active':''; ?>">📡 API 线路</button>
         <button data-tab="platform" class="<?php echo $page==='platform'?'active':''; ?>">🎯 平台规则</button>
         <button data-tab="switch" class="<?php echo $page==='switch'?'active':''; ?>">🔀 系统开关</button>
         <button data-tab="zjk" class="<?php echo $page==='zjk'?'active':''; ?>">📝 自定义接口</button>
         <button data-tab="test" class="<?php echo $page==='test'?'active':''; ?>">🧪 接口测试</button>
-        <button data-tab="custom_algorithms" class="<?php echo $page==='custom_algorithms'?'active':''; ?>">🧩 算法</button>
-        <button data-tab="feat" class="<?php echo $page==='feat'?'active':''; ?>">🎯 规则2</button>
         <button data-tab="tools" class="<?php echo $page==='tools'?'active':''; ?>">🧰 工具管理</button>
-        <button data-tab="backup" class="<?php echo $page==='backup'?'active':''; ?>">💾 备份</button>
-        <button data-tab="password" class="<?php echo $page==='password'?'active':''; ?>">🔐 密码</button>
-        <button data-tab="setting" class="<?php echo $page==='setting'?'active':''; ?>">🛠️ 后台设置</button>
+        <button data-tab="system_mgmt" class="<?php echo $page==='system_mgmt'?'active':''; ?>">🛠️ 系统管理</button>
     </div>
 
     <?php
@@ -1763,9 +1756,240 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     </div>
 
     <?php
-    // ===== 6. NoAd 数据统计 =====
+    // ===== 6. 智能去广告中心 =====
     ?>
-    <div class="tab-panel <?php echo $page==='noad_stats'?'active':''; ?>" id="tab-noad_stats">
+    <div class="tab-panel <?php echo $page==='ad_center'?'active':''; ?>" id="tab-ad_center">
+        <h2>📌 智能去广告中心</h2>
+
+        <!-- 子标签导航 -->
+        <div class="tabs-nav" id="adCenterSubNav" style="margin-bottom:20px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:8px">
+            <button data-subtab="ad_overview" class="active" style="color:white;background:rgba(255,255,255,0.15);border:none;padding:10px 18px;border-radius:10px;font-size:14px">📊 总览与设置</button>
+            <button data-subtab="ad_sources" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔌 解析源</button>
+            <button data-subtab="ad_rules" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🚫 关键词规则</button>
+            <button data-subtab="ad_algorithms" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🧩 算法管理</button>
+        </div>
+
+        <!-- 子标签 1: 总览与设置 -->
+        <div class="sub-tab-panel active" id="subtab-ad_overview">
+            <?php if (!$GLOBALS['db']): ?>
+                <div class="msg-box err">⚠️ SQLite 未加载或数据库不可用。</div>
+            <?php else: ?>
+                <div class="grid-flow" style="margin-bottom:20px">
+                    <div class="stat-card"><div class="label">总解析次数</div><div class="num"><?php echo number_format($overview['total_requests'] ?? 0); ?></div></div>
+                    <div class="stat-card v2"><div class="label">已移除广告片段</div><div class="num"><?php echo number_format($overview['total_ad_removed'] ?? 0); ?></div></div>
+                    <div class="stat-card v3"><div class="label">平均每个视频广告</div><div class="num"><?php echo number_format(($overview['total_requests'] ?? 0) > 0 ? ($overview['total_ad_removed'] ?? 0) / ($overview['total_requests'] ?? 1) : 0, 2); ?></div></div>
+                    <div class="stat-card v4"><div class="label">活跃解析源</div><div class="num"><?php echo count($noadSources); ?></div></div>
+                </div>
+            <?php endif; ?>
+
+            <form method="post">
+                <input type="hidden" name="action" value="save_noad_config">
+                <div class="panel">
+                    <h3>🎛️ 总开关</h3>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+                        <label style="display:block;margin:6px 0;padding:8px;background:#f8fafc;border-radius:8px"><input type="checkbox" name="noad_enabled" <?php if (!empty($noadConfig['noad_enabled'])) echo 'checked'; ?>> ✅ 启用 NoAd 去广告解析</label>
+                        <label style="display:block;margin:6px 0;padding:8px;background:#f8fafc;border-radius:8px"><input type="checkbox" name="enable_ad_filter" <?php if (!empty($noadConfig['enable_ad_filter'])) echo 'checked'; ?>> 🚫 启用 M3U8 广告片段智能过滤</label>
+                        <label style="display:block;margin:6px 0;padding:8px;background:#f8fafc;border-radius:8px"><input type="checkbox" name="enable_multi_source" <?php if (!empty($noadConfig['enable_multi_source'])) echo 'checked'; ?>> 🔀 启用多源自动匹配</label>
+                        <label style="display:block;margin:6px 0;padding:8px;background:#f8fafc;border-radius:8px"><input type="checkbox" name="cache_enabled" <?php if (!empty($noadConfig['cache_enabled'])) echo 'checked'; ?>> 🧹 启用缓存加速</label>
+                        <label style="display:block;margin:6px 0;padding:8px;background:#f8fafc;border-radius:8px"><input type="checkbox" name="stats_enabled" <?php if (!empty($noadConfig['stats_enabled'])) echo 'checked'; ?>> 📈 启用访问数据统计</label>
+                        <label style="display:block;margin:6px 0;padding:8px;background:#f8fafc;border-radius:8px"><input type="checkbox" name="debug_mode" <?php if (!empty($noadConfig['debug_mode'])) echo 'checked'; ?>> 🐛 调试模式</label>
+                    </div>
+                </div>
+                <div class="panel">
+                    <h3>⚡ 性能参数</h3>
+                    <div class="grid-flow">
+                        <label>缓存有效期（秒）<br><input type="number" name="cache_ttl" value="<?php echo (int)($noadConfig['cache_ttl'] ?? 1800); ?>" min="60" max="86400" style="width:100%"></label>
+                        <label>最多尝试解析源数<br><input type="number" name="max_source_try" value="<?php echo (int)($noadConfig['max_source_try'] ?? 3); ?>" min="1" max="20" style="width:100%"></label>
+                        <label>单源请求超时（秒）<br><input type="number" name="request_timeout" value="<?php echo (int)($noadConfig['request_timeout'] ?? 10); ?>" min="1" max="120" style="width:100%"></label>
+                        <label>关键词命中阈值<br><input type="number" name="ad_keyword_threshold" value="<?php echo (int)($noadConfig['ad_keyword_threshold'] ?? 2); ?>" min="1" max="20" style="width:100%"></label>
+                    </div>
+                </div>
+                <div style="margin-top:16px">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存配置</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 子标签 2: 解析源管理 -->
+        <div class="sub-tab-panel" id="subtab-ad_sources" style="display:none">
+            <div class="panel">
+                <h3>➕ 添加解析源</h3>
+                <form method="post" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px">
+                    <input type="hidden" name="action" value="add_source">
+                    <input type="text" name="name" placeholder="源名称（如：如意解析）" required style="padding:10px">
+                    <input type="text" name="url" placeholder="源 URL" required style="padding:10px">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">➕ 添加</button>
+                </form>
+            </div>
+            <div class="panel">
+                <h3>📋 现有解析源（共 <?php echo count($noadSources); ?> 个）</h3>
+                <?php if (empty($noadSources)): ?>
+                    <p style="color:#888">暂无解析源。</p>
+                <?php else: ?>
+                    <table class="data-table">
+                        <thead><tr><th>ID</th><th>名称</th><th>URL</th><th>操作</th></tr></thead>
+                        <tbody>
+                        <?php foreach ($noadSources as $src): ?>
+                            <tr>
+                                <td><?php echo (int)$src['id']; ?></td>
+                                <td><?php echo htmlspecialchars($src['name']); ?></td>
+                                <td style="max-width:400px"><code class="monocode"><?php echo htmlspecialchars(substr($src['url'], 0, 60)); ?>...</code></td>
+                                <td>
+                                    <form method="post" style="display:inline" onsubmit="return confirm('确认删除？')">
+                                        <input type="hidden" name="action" value="delete_source">
+                                        <input type="hidden" name="source_id" value="<?php echo (int)$src['id']; ?>">
+                                        <button type="submit" class="btn-danger-sm">删除</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- 子标签 3: 关键词规则 -->
+        <div class="sub-tab-panel" id="subtab-ad_rules" style="display:none">
+            <p style="color:#666">当前阈值：命中 <strong><?php echo (int)($noadConfig['ad_keyword_threshold'] ?? 2); ?></strong> 条关键词的片段将被判定为广告。</p>
+            <div class="panel">
+                <h3>➕ 添加自定义规则</h3>
+                <form method="post" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <input type="hidden" name="action" value="add_ad_rule">
+                    <input type="text" name="keyword" placeholder="例：ad_roll / promo / 片头广告" required style="flex:1;min-width:220px">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">➕ 添加规则</button>
+                </form>
+            </div>
+            <div class="panel">
+                <h3>📝 默认内置规则</h3>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    <?php foreach (($noadConfig['ad_keywords'] ?? []) as $kw): ?>
+                        <span class="badge badge-yellow" style="font-size:13px;padding:6px 12px"><?php echo htmlspecialchars($kw); ?></span>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <div class="panel">
+                <h3>🗃️ 自定义规则库（共 <?php echo count($adRules); ?> 条）</h3>
+                <?php if (empty($adRules)): ?>
+                    <p style="color:#888">暂无自定义规则。</p>
+                <?php else: ?>
+                <table class="data-table">
+                    <thead><tr><th>ID</th><th>关键词</th><th>命中次数</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($adRules as $r): ?>
+                    <tr>
+                        <td><?php echo (int)$r['id']; ?></td>
+                        <td><code class="monocode"><?php echo htmlspecialchars($r['keyword']); ?></code></td>
+                        <td><?php echo (int)($r['hit_count'] ?? 0); ?></td>
+                        <td><?php echo empty($r['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
+                        <td>
+                            <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
+                            <form method="post" style="display:inline" onsubmit="return confirm('确认删除规则 #<?php echo (int)$r['id']; ?>？')"><input type="hidden" name="action" value="delete_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-danger-sm">删除</button></form>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- 子标签 4: 算法管理 -->
+        <div class="sub-tab-panel" id="subtab-ad_algorithms" style="display:none">
+            <?php
+                $ry = $noadConfig;
+                $ruyiEnabled = $ry['ruyi_enabled'] ?? true;
+                $ruyiScore = $ry['ruyi_score_threshold'] ?? 4;
+                $ruyiBaseline = $ry['ruyi_baseline_sec'] ?? 4.00;
+                $ruyiTol = $ry['ruyi_baseline_tolerance'] ?? 0.10;
+                $ruyiMinClu = $ry['ruyi_min_cluster_len'] ?? 3;
+                $ruyiMaxClu = $ry['ruyi_max_cluster_len'] ?? 15;
+                $ruyiShort = $ry['ruyi_short_seg_threshold'] ?? 3.0;
+                $ruyiDisc = $ry['ruyi_enable_discontinuity'] ?? true;
+                $ruyiDebug = $ry['ruyi_debug_mode'] ?? false;
+            ?>
+
+            <div class="panel">
+                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                    <button type="button" class="btn-primary-sm" onclick="reloadAlgorithms()" style="font-size:14px;padding:8px 18px">🔄 重新扫描算法</button>
+                    <span id="algoStatus" style="color:#555;font-size:13px">就绪</span>
+                    <span style="margin-left:auto;color:#888;font-size:13px">共 <strong id="algoTotal">0</strong> 个 · 启用 <strong id="algoEnabled">0</strong> 个</span>
+                </div>
+                <h3 style="margin-top:20px">📋 已加载算法</h3>
+                <table class="data-table" id="algoTable">
+                    <thead><tr><th>ID</th><th>名称</th><th>描述</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody><tr><td colspan="5" style="text-align:center;color:#888">点击「重新扫描」加载</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="panel">
+                <h3>🧪 本地测试</h3>
+                <textarea id="algoTestInput" style="width:100%;min-height:100px;padding:10px;font-family:monospace;font-size:13px;border:1px solid #ddd;border-radius:8px" placeholder="输入文本或 URL 进行测试..."></textarea>
+                <div style="margin-top:8px">
+                    <label>作用域：
+                        <select id="algoTestScope">
+                            <option value="all">全部</option>
+                            <option value="url">仅 URL</option>
+                            <option value="m3u8">仅 M3U8</option>
+                        </select>
+                    </label>
+                    <button type="button" class="btn-primary-sm" onclick="testAlgorithms()" style="font-size:14px;padding:8px 18px">▶ 测试</button>
+                </div>
+                <pre id="algoTestResult" style="margin-top:12px;padding:12px;background:#f8f8fa;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;color:#333">结果将显示在此处...</pre>
+            </div>
+
+            <div class="panel" style="background:linear-gradient(135deg,#fff5f7,#fff)">
+                <h3>🎯 如意去广告算法 v2.1 — 参数设置</h3>
+                <p style="color:#666;font-size:13px">基于 M3U8 时长序列模式识别。默认参数平衡精准度与误删率。</p>
+                <form method="post">
+                    <input type="hidden" name="action" value="save_noad_config">
+                    <input type="hidden" name="noad_enabled" value="1">
+                    <input type="hidden" name="enable_ad_filter" value="1">
+                    <input type="hidden" name="cache_enabled" value="1">
+                    <input type="hidden" name="enable_multi_source" value="1">
+                    <input type="hidden" name="stats_enabled" value="1">
+                    <input type="hidden" name="cache_ttl" value="<?php echo (int)($ry['cache_ttl'] ?? 1800); ?>">
+                    <input type="hidden" name="max_source_try" value="<?php echo (int)($ry['max_source_try'] ?? 3); ?>">
+                    <input type="hidden" name="request_timeout" value="<?php echo (int)($ry['request_timeout'] ?? 10); ?>">
+                    <input type="hidden" name="ad_keyword_threshold" value="<?php echo (int)($ry['ad_keyword_threshold'] ?? 2); ?>">
+                    <input type="hidden" name="debug_mode" value="0">
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px">
+                        <div style="background:#fafafa;border:1px dashed #e0e0e0;padding:14px 18px;border-radius:12px">
+                            <h4 style="margin:0 0 10px 0;color:#444">📌 基础开关</h4>
+                            <div style="padding:4px 0"><label style="font-size:14px"><input type="checkbox" name="ruyi_enabled" <?php echo $ruyiEnabled ? 'checked' : ''; ?>> 启用如意算法</label></div>
+                            <div style="padding:4px 0"><label style="font-size:14px"><input type="checkbox" name="ruyi_enable_discontinuity" <?php echo $ruyiDisc ? 'checked' : ''; ?>> 启用 DISCONTINUITY 信号</label></div>
+                            <div style="padding:4px 0"><label style="font-size:14px"><input type="checkbox" name="ruyi_debug_mode" <?php echo $ruyiDebug ? 'checked' : ''; ?>> 调试模式</label></div>
+                        </div>
+                        <div style="background:#fafafa;border:1px dashed #e0e0e0;padding:14px 18px;border-radius:12px">
+                            <h4 style="margin:0 0 10px 0;color:#444">🎚 Score 阈值</h4>
+                            <div style="padding:6px 0;font-size:14px">
+                                <label>删除判定 Score：<input type="number" name="ruyi_score_threshold" min="1" max="10" value="<?php echo (int)$ruyiScore; ?>" style="width:60px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                                <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">推荐：<b>3=保守</b>，<b>4=平衡</b>，<b>5=激进</b></div>
+                            </div>
+                        </div>
+                        <div style="background:#fafafa;border:1px dashed #e0e0e0;padding:14px 18px;border-radius:12px">
+                            <h4 style="margin:0 0 10px 0;color:#444">📏 时长检测</h4>
+                            <div style="padding:4px 0;font-size:14px"><label>基准时长（秒）：<input type="number" name="ruyi_baseline_sec" min="0.5" max="30" step="0.1" value="<?php echo number_format($ruyiBaseline, 2); ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                            <div style="padding:4px 0;font-size:14px"><label>容差：<input type="number" name="ruyi_baseline_tolerance" min="0.01" max="5" step="0.01" value="<?php echo number_format($ruyiTol, 2); ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                            <div style="padding:4px 0;font-size:14px"><label>短片段阈值：<input type="number" name="ruyi_short_seg_threshold" min="0.5" max="10" step="0.1" value="<?php echo number_format($ruyiShort, 2); ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                        </div>
+                        <div style="background:#fafafa;border:1px dashed #e0e0e0;padding:14px 18px;border-radius:12px">
+                            <h4 style="margin:0 0 10px 0;color:#444">🎯 簇检测</h4>
+                            <div style="padding:4px 0;font-size:14px"><label>最小簇长度：<input type="number" name="ruyi_min_cluster_len" min="1" max="20" value="<?php echo (int)$ruyiMinClu; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                            <div style="padding:4px 0;font-size:14px"><label>最大簇长度：<input type="number" name="ruyi_max_cluster_len" min="5" max="50" value="<?php echo (int)$ruyiMaxClu; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                        </div>
+                    </div>
+                    <div style="margin-top:16px"><button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存如意参数</button></div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <?php
+    // ===== 6. NoAd 数据统计 ===== (旧页面，保留但不显示在导航)
+    ?>
+    <div class="tab-panel" id="tab-noad_stats" style="display:none">
         <h2>📈 NoAd 数据统计</h2>
         <?php if (!$GLOBALS['db']): ?>
             <div class="msg-box err">⚠️ SQLite 未加载或数据库不可用。</div>
@@ -1839,7 +2063,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 7. 解析源管理 =====
     ?>
-    <div class="tab-panel <?php echo $page==='noad_sources'?'active':''; ?>" id="tab-noad_sources">
+    <div class="tab-panel" id="tab-noad_sources" style="display:none">
         <h2>🔌 去广告解析源</h2>
         <div class="panel">
             <h3>➕ 添加 / 编辑解析源</h3>
@@ -1912,7 +2136,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 8. 广告规则库 =====
     ?>
-    <div class="tab-panel <?php echo $page==='noad_rules'?'active':''; ?>" id="tab-noad_rules">
+    <div class="tab-panel" id="tab-noad_rules" style="display:none">
         <h2>🚫 广告片段识别规则库</h2>
         <p style="color:#666">当前阈值：命中 <strong><?php echo (int)($noadConfig['ad_keyword_threshold'] ?? 2); ?></strong> 条关键词的片段将被判定为广告。</p>
         <div class="panel">
@@ -1960,7 +2184,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 9. NoAd 系统设置 =====
     ?>
-    <div class="tab-panel <?php echo $page==='noad_config'?'active':''; ?>" id="tab-noad_config">
+    <div class="tab-panel" id="tab-noad_config" style="display:none">
         <h2>⚙️ NoAd 去广告系统设置</h2>
         <form method="post">
             <input type="hidden" name="action" value="save_noad_config">
@@ -2127,7 +2351,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 15. 自定义算法 =====
     ?>
-    <div class="tab-panel <?php echo $page==='custom_algorithms'?'active':''; ?>" id="tab-custom_algorithms">
+    <div class="tab-panel" id="tab-custom_algorithms" style="display:none">
         <h2>🧩 自定义算法管理</h2>
         <p style="color:#666">目录：<code class="monocode">/algorithms/*.php</code>，每个文件为一个独立算法类，继承 <code class="monocode">AbstractAlgorithm</code>。</p>
         <div class="panel">
@@ -3062,9 +3286,107 @@ https://cdn.example.com/video/part4.ts
     </div>
 
     <?php
-    // ===== 17. 修改管理员密码 =====
+    // ===== 17. 系统管理 ===== (合并备份、密码、设置)
     ?>
-    <div class="tab-panel <?php echo $page==='password'?'active':''; ?>" id="tab-password">
+    <div class="tab-panel <?php echo $page==='system_mgmt'?'active':''; ?>" id="tab-system_mgmt">
+        <h2>🛠️ 系统管理</h2>
+
+        <!-- 子标签导航 -->
+        <div class="tabs-nav" id="systemSubNav" style="margin-bottom:20px;background:linear-gradient(135deg,#4facfe,#00f2fe);padding:8px">
+            <button data-subtab="sys_backup" class="active" style="color:white;background:rgba(255,255,255,0.15);border:none;padding:10px 18px;border-radius:10px;font-size:14px">💾 配置备份</button>
+            <button data-subtab="sys_password" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔐 修改密码</button>
+            <button data-subtab="sys_setting" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">⚙️ 后台设置</button>
+        </div>
+
+        <!-- 子标签 1: 配置备份 -->
+        <div class="sub-tab-panel active" id="subtab-sys_backup">
+            <div class="panel">
+                <h3>💾 配置备份与恢复</h3>
+                <p style="color:#666;font-size:13px">点击下方按钮创建配置文件的备份，用于恢复或迁移。</p>
+                <form method="post" style="margin-top:12px">
+                    <input type="hidden" name="action" value="create_backup">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">📦 创建配置备份</button>
+                </form>
+                <?php
+                $backupDir = __DIR__ . '/cache';
+                $backups = [];
+                if (is_dir($backupDir)) {
+                    foreach (glob($backupDir . '/backup_*.php') as $f) {
+                        $backups[] = $f;
+                    }
+                }
+                if (!empty($backups)):
+                ?>
+                <div style="margin-top:20px">
+                    <h4>📂 已有备份（<?php echo count($backups); ?> 个）</h4>
+                    <table class="data-table">
+                        <thead><tr><th>文件名</th><th>大小</th><th>创建时间</th><th>操作</th></tr></thead>
+                        <tbody>
+                        <?php foreach (array_reverse($backups) as $bk): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars(basename($bk)); ?></td>
+                                <td><?php echo round(filesize($bk)/1024, 2); ?> KB</td>
+                                <td><?php echo date('Y-m-d H:i:s', filemtime($bk)); ?></td>
+                                <td><form method="post" style="display:inline" onsubmit="return confirm('确认恢复此备份？将覆盖当前配置！')"><input type="hidden" name="action" value="restore_backup"><input type="hidden" name="backup_file" value="<?php echo htmlspecialchars(basename($bk)); ?>"><button type="submit" class="btn-secondary-sm">恢复</button></form></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- 子标签 2: 修改密码 -->
+        <div class="sub-tab-panel" id="subtab-sys_password" style="display:none">
+            <div class="panel" style="max-width:500px">
+                <form method="post">
+                    <input type="hidden" name="action" value="change_password">
+                    <label style="display:block;margin:10px 0">当前密码<br><input type="password" name="old_password" required style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></label>
+                    <label style="display:block;margin:10px 0">新密码（至少 6 位）<br><input type="password" name="new_password" minlength="6" required style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></label>
+                    <label style="display:block;margin:10px 0">确认密码<br><input type="password" name="confirm_password" minlength="6" required style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px"></label>
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px;margin-top:10px">🔐 修改密码</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 子标签 3: 后台设置 -->
+        <div class="sub-tab-panel" id="subtab-sys_setting" style="display:none">
+            <form method="post">
+                <input type="hidden" name="action" value="save_admin_config">
+                <div class="panel">
+                    <h3>🎛️ 基础设置</h3>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="admin_enabled" <?php if (!empty($adminConfig['admin_enabled'])) echo 'checked'; ?>> ✅ 启用后台管理</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="enforce_port" <?php if (!empty($adminConfig['enforce_port'])) echo 'checked'; ?>> ⚠️ 强制端口校验</label>
+                    <label style="display:block;margin:10px 0">允许访问的端口（逗号分隔）：<br><input type="text" name="allowed_ports" value="<?php echo htmlspecialchars(implode(',', $adminConfig['allowed_ports'] ?? [])); ?>" style="width:300px;margin-top:4px"></label>
+                    <label style="display:block;margin:10px 0">允许访问的 IP（逗号分隔）：<br><input type="text" name="allowed_ips" value="<?php echo htmlspecialchars(implode(',', $adminConfig['allowed_ips'] ?? [])); ?>" style="width:300px;margin-top:4px"></label>
+                </div>
+                <div class="panel">
+                    <h3>🔐 安全设置</h3>
+                    <label style="display:block;margin:10px 0">会话有效期（秒）：<input type="number" name="session_lifetime" value="<?php echo max(60, (int)($adminConfig['session_lifetime'] ?? 7200)); ?>" min="60" max="864000" style="width:120px;margin-left:10px"></label>
+                    <label style="display:block;margin:10px 0">最大登录失败次数：<input type="number" name="max_login_attempts" value="<?php echo max(1, (int)($adminConfig['max_login_attempts'] ?? 5)); ?>" min="1" max="999" style="width:100px;margin-left:10px"></label>
+                    <label style="display:block;margin:10px 0">失败锁定时长（秒）：<input type="number" name="lockout_duration" value="<?php echo max(60, (int)($adminConfig['lockout_duration'] ?? 300)); ?>" min="60" max="86400" style="width:100px;margin-left:10px"></label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_log" <?php if (!empty($adminConfig['enable_log'])) echo 'checked'; ?>> 📒 启用操作日志</label>
+                    <div style="margin-top:16px"><button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存后台设置</button></div>
+                </div>
+            </form>
+
+            <form method="post" style="margin-top:16px" onsubmit="return confirm('确认要修改后台入口文件名？请确保你能记住新文件名！');">
+                <input type="hidden" name="action" value="change_path">
+                <div class="panel">
+                    <h3>🔄 修改后台入口路径</h3>
+                    <p style="color:#666;font-size:13px">当前路径：<strong><?php echo htmlspecialchars($currentScript); ?></strong></p>
+                    <label style="display:block;margin:10px 0">新后台文件名：<input type="text" name="new_path" placeholder="例：my_console.php" pattern="[A-Za-z0-9_\-]+\.php$" required style="width:260px;margin-left:10px"></label>
+                    <button type="submit" class="btn-danger-sm" style="font-size:14px;padding:10px 24px">🔄 重命名后台入口</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <?php
+    // ===== 17. 修改管理员密码 ===== (旧页面，保留但不显示在导航)
+    ?>
+    <div class="tab-panel" id="tab-password" style="display:none">
         <h2>🔐 修改管理员密码</h2>
         <div class="panel" style="max-width:500px">
             <form method="post">
@@ -3080,7 +3402,7 @@ https://cdn.example.com/video/part4.ts
     <?php
     // ===== 18. 后台设置 =====
     ?>
-    <div class="tab-panel <?php echo $page==='setting'?'active':''; ?>" id="tab-setting">
+    <div class="tab-panel" id="tab-setting" style="display:none">
         <h2>🛠️ 后台设置</h2>
         <form method="post">
             <input type="hidden" name="action" value="save_admin_config">
@@ -3127,6 +3449,40 @@ https://cdn.example.com/video/part4.ts
             panels.forEach(function(p) {
                 if (p.id === 'tab-' + tab) p.classList.add('active');
                 else p.classList.remove('active');
+            });
+        });
+    });
+})();
+
+// ===== 子标签页切换（智能去广告中心 + 系统管理）
+(function() {
+    // 处理所有带有 data-subtab 的按钮
+    var subNavs = document.querySelectorAll('[id$="SubNav"]');
+    subNavs.forEach(function(nav) {
+        var btns = nav.querySelectorAll('button[data-subtab]');
+        btns.forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var subtab = this.getAttribute('data-subtab');
+                // 在当前 tab-panel 范围内查找所有 sub-tab-panel
+                var parentPanel = nav.closest('.tab-panel');
+                if (!parentPanel) return; // 找不到父面板时跳过
+                var subPanels = parentPanel.querySelectorAll('.sub-tab-panel');
+                btns.forEach(function(b) {
+                    b.classList.remove('active');
+                    b.style.background = 'transparent';
+                    b.style.background = '';
+                });
+                this.classList.add('active');
+                this.style.background = 'rgba(255,255,255,0.15)';
+                subPanels.forEach(function(sp) {
+                    if (sp.id === 'subtab-' + subtab) {
+                        sp.classList.add('active');
+                        sp.style.display = 'block';
+                    } else {
+                            sp.classList.remove('active');
+                            sp.style.display = 'none';
+                    }
+                });
             });
         });
     });
