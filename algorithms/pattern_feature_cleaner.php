@@ -293,6 +293,16 @@ class PatternFeatureCleaner extends AbstractAlgorithm
     {
         if (empty($content)) return ['segments' => [], 'domains' => [], 'paths' => []];
 
+        // 过滤无效内容：检查是否为有效的 M3U8 或 JSON 响应
+        if (!$this->isValidM3U8OrJSON($content)) {
+            return ['segments' => [], 'domains' => [], 'paths' => []];
+        }
+
+        // 如果是 JSON，尝试解析
+        if ($this->looksLikeJSON($content)) {
+            return $this->parseJSONResponse($content, $baseUrl);
+        }
+
         $lines = explode("\n", $content);
         $segUrls = [];
         $domains = [];
@@ -339,6 +349,101 @@ class PatternFeatureCleaner extends AbstractAlgorithm
             'domains' => $domains,
             'paths' => $paths,
         ];
+    }
+
+    /**
+     * 检查内容是否为有效的 M3U8 或 JSON
+     */
+    private function isValidM3U8OrJSON($content)
+    {
+        $content = trim($content);
+        if (empty($content)) return false;
+
+        // 检查是否为有效的 M3U8（以 #EXTM3U 开头）
+        if (strpos($content, '#EXTM3U') === 0) return true;
+
+        // 检查是否为有效的 JSON（以 { 或 [ 开头）
+        if (strpos($content, '{') === 0 || strpos($content, '[') === 0) return true;
+
+        // 检查是否包含有效的片段 URL
+        if (preg_match('/https?:\/\/[\w\-\.]+\.[a-z]{2,}\/.+\.(ts|m3u8)/i', $content)) return true;
+
+        // 过滤错误消息
+        $errorPatterns = [
+            '/error|failed|timeout|denied|forbidden|not found|unavailable|service unavailable/i',
+            '/upstream|gateway|proxy|502|503|504/i',
+        ];
+
+        foreach ($errorPatterns as $pattern) {
+            if (preg_match($pattern, $content)) {
+                error_log('[PatternFeatureCleaner] 过滤错误响应: ' . substr($content, 0, 100));
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 检查内容是否看起来像 JSON
+     */
+    private function looksLikeJSON($content)
+    {
+        $content = trim($content);
+        return strpos($content, '{') === 0 || strpos($content, '[') === 0;
+    }
+
+    /**
+     * 解析 JSON 响应
+     */
+    private function parseJSONResponse($jsonContent, $baseUrl)
+    {
+        try {
+            $data = json_decode($jsonContent, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return ['segments' => [], 'domains' => [], 'paths' => []];
+            }
+
+            // 尝试从多种 JSON 结构中提取 M3U8 URL
+            $m3u8Url = '';
+            
+            // 常见的解析接口响应格式
+            if (!empty($data['url'])) $m3u8Url = $data['url'];
+            elseif (!empty($data['data']['url'])) $m3u8Url = $data['data']['url'];
+            elseif (!empty($data['video']['url'])) $m3u8Url = $data['video']['url'];
+            elseif (!empty($data['result'])) $m3u8Url = $data['result'];
+            elseif (!empty($data['m3u8'])) $m3u8Url = $data['m3u8'];
+
+            if (!empty($m3u8Url) && filter_var($m3u8Url, FILTER_VALIDATE_URL)) {
+                // 如果是 M3U8 URL，下载并解析
+                return $this->downloadAndParseM3U8($m3u8Url);
+            }
+        } catch (Exception $e) {
+            error_log('[PatternFeatureCleaner] JSON 解析失败: ' . $e->getMessage());
+        }
+
+        return ['segments' => [], 'domains' => [], 'paths' => []];
+    }
+
+    /**
+     * 下载并解析 M3U8
+     */
+    private function downloadAndParseM3U8($url)
+    {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_USERAGENT, $this->getRandomUA());
+        $content = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if (!empty($content) && $httpCode >= 200 && $httpCode < 400) {
+            return $this->parseM3U8Content($content, $url);
+        }
+
+        return ['segments' => [], 'domains' => [], 'paths' => []];
     }
 
     // ============== M3U8 清理 ==============
