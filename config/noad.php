@@ -1,335 +1,596 @@
 <?php
-/**
- * Noad 去广告解析系统配置
- * @author MX-射手沫蝴蝶
- * @contact QQ: 2094332348
- * @version 4.0.0
- */
+/** NoAd 去广告系统 v4 配置文件 */
 
 return array(
-    // ========== 系统总开关 ==========
-    "noad_enabled" => true,                 // Noad 去广告系统总开关
-    "debug_mode" => false,                  // 调试模式（生产环境建议关闭）
-
-    // ========== M3U8 去广告核心配置 ==========
-    "enable_ad_filter" => true,             // 启用广告片段智能过滤
-    "enable_ts_proxy" => true,              // TS 片段代理（解决跨域问题）
-    "ad_keyword_threshold" => 2,            // 广告关键词命中阈值（超过该阈值判定为广告）
-
-    // ========== 缓存加速配置 ==========
-    "cache_enabled" => true,                // 启用缓存加速
-    "cache_ttl" => 1800,                    // 缓存有效期（秒）默认 30 分钟
-    "cache_dir" => __DIR__ . "/../cache",   // 缓存目录
-
-    // ========== 多源自动匹配 ==========
-    "enable_multi_source" => true,          // 启用多源自动匹配
-    "max_source_try" => 3,                  // 单视频最多尝试解析源数量
-    "request_timeout" => 10,                // 单源请求超时时间（秒）
-    "concurrent_limit" => 8,                // 并发请求上限
-
-    // ========== 广告关键词库（自动识别流媒体规则）==========
-    // 说明: 当 M3U8 片段 URI 或 EXTINF 描述中命中以下关键词之一，
-    //       该片段将被标记为广告并从播放列表中移除。
-    "ad_keywords" => array(
-        // ========== A. 通用广告标识 ==========
-        "ad", "ads", "advert", "advertisement", "pre-roll", "mid-roll", "post-roll",
-        "adbreak", "adslot", "adzone", "adbreak", "sponsor",
-
-        // ========== B. 中文广告标识 ==========
-        "广告", "插播", "片头广告", "片中广告", "片尾广告",
-        "推广", "推广位", "商业广告", "贴片广告", "暂停广告",
-        "角标广告", "浮动广告", "前置广告", "中插广告", "后插广告",
-
-        // ========== C. 视频平台广告相关 ==========
-        "ad.qq.com", "adnet", "adnxs", "adserver", "adsrv",
-        "adsame", "adwo", "adview", "admob", "admob",
-        "inmobi", "appodeal", "mopub", "unityads", "vungle",
-        "applovin", "chartboost", "ironsrc", "mintegral", "穿山甲",
-        "广点通", "百青藤", "芒果广告", "优酷广告", "腾讯广告",
-
-        // ========== D. CDN/域名广告关键词 ==========
-        "adcdn", "adpush", "adp", "adstatic", "adcdn",
-        "adapi", "adfile", "adimg", "adpic", "adpicx",
-        "adv.", "adv-", "-adv", "/adv/", "ads/",
-        "click", "clicktrack", "clickid", "clickTAG",
-        "track", "tracking", "tracker", "analytics", "stat.",
-        "tongji", "cnzz", "baidu", "hm.baidu", "hm.js",
-        "51.la", "metric", "pixel", "beacon",
-
-        // ========== E. 播放器/解析广告 ==========
-        "tvod", "txvideo_ad", "aliyun_ad", "qiyi_ad", "youku_ad",
-        "vip.live.com", "vip video", "vip.ad", "vipad",
-        "playerad", "player_ad", "preroll", "postroll", "midroll",
-        "videoad", "video_ad", "clipad", "clip_ad",
-        "mp4ad", "ad.mp4", "ad.m3u8", "ad_",
-
-        // ========== F. 推广/营销关键词 ==========
-        "promo", "promotion", "sponsor", "sponsored",
-        "featured", "recommend_ad", "hotspot", "hot_ad",
-        "banner", "bannerad", "floatad", "float_ad",
-        "logo", "overlay", "overlay_ad", "watermark_ad",
-        "skip", "skipad", "skip_ad", "jumpad",
-        "countdown", "countdown_ad", "adcountdown",
-
-        // ========== G. 短片段广告（时长 < 3秒 且含以下关键词）==========
-        "logo_", "_logo", "logo.", "corner_ad",
-        "preroll_", "_preroll", "postroll_", "_postroll",
-        "short_", "_short", "teaser", "teaser_ad",
-        "trailer_ad", "_trailer", "intro_ad", "outro_ad",
-        "bumper", "bumper_ad",
-
-        // ========== H. M3U8 广告片段常见路径 ==========
-        "commercial", "commercials", "ad_content", "ad_clip",
-        "adsegment", "ad_seg", "adv_seg", "adpiece",
-        "breakpoint", "ad_break", "adblock", "block_ad",
-        "noncontent", "non_content", "placeholder_ad",
+    'noad_enabled' => true,
+    'debug_mode' => true,
+    'enable_ad_filter' => true,
+    'enable_ts_proxy' => true,
+    'ad_keyword_threshold' => 2,
+    'cache_enabled' => true,
+    'cache_ttl' => 1800,
+    'cache_dir' => __DIR__ . '/../cache',
+    'enable_multi_source' => true,
+    'max_source_try' => 3,
+    'request_timeout' => 10,
+    'ad_keywords' => array (
+  0 => 'ad',
+  1 => 'ads',
+  2 => 'advert',
+  3 => 'advertisement',
+  4 => 'pre-roll',
+  5 => 'mid-roll',
+  6 => 'post-roll',
+  7 => 'adbreak',
+  8 => 'adslot',
+  9 => 'adzone',
+  10 => 'adbreak',
+  11 => 'sponsor',
+  12 => '广告',
+  13 => '插播',
+  14 => '片头广告',
+  15 => '片中广告',
+  16 => '片尾广告',
+  17 => '推广',
+  18 => '推广位',
+  19 => '商业广告',
+  20 => '贴片广告',
+  21 => '暂停广告',
+  22 => '角标广告',
+  23 => '浮动广告',
+  24 => '前置广告',
+  25 => '中插广告',
+  26 => '后插广告',
+  27 => 'ad.qq.com',
+  28 => 'adnet',
+  29 => 'adnxs',
+  30 => 'adserver',
+  31 => 'adsrv',
+  32 => 'adsame',
+  33 => 'adwo',
+  34 => 'adview',
+  35 => 'admob',
+  36 => 'admob',
+  37 => 'inmobi',
+  38 => 'appodeal',
+  39 => 'mopub',
+  40 => 'unityads',
+  41 => 'vungle',
+  42 => 'applovin',
+  43 => 'chartboost',
+  44 => 'ironsrc',
+  45 => 'mintegral',
+  46 => '穿山甲',
+  47 => '广点通',
+  48 => '百青藤',
+  49 => '芒果广告',
+  50 => '优酷广告',
+  51 => '腾讯广告',
+  52 => 'adcdn',
+  53 => 'adpush',
+  54 => 'adp',
+  55 => 'adstatic',
+  56 => 'adcdn',
+  57 => 'adapi',
+  58 => 'adfile',
+  59 => 'adimg',
+  60 => 'adpic',
+  61 => 'adpicx',
+  62 => 'adv.',
+  63 => 'adv-',
+  64 => '-adv',
+  65 => '/adv/',
+  66 => 'ads/',
+  67 => 'click',
+  68 => 'clicktrack',
+  69 => 'clickid',
+  70 => 'clickTAG',
+  71 => 'track',
+  72 => 'tracking',
+  73 => 'tracker',
+  74 => 'analytics',
+  75 => 'stat.',
+  76 => 'tongji',
+  77 => 'cnzz',
+  78 => 'baidu',
+  79 => 'hm.baidu',
+  80 => 'hm.js',
+  81 => '51.la',
+  82 => 'metric',
+  83 => 'pixel',
+  84 => 'beacon',
+  85 => 'tvod',
+  86 => 'txvideo_ad',
+  87 => 'aliyun_ad',
+  88 => 'qiyi_ad',
+  89 => 'youku_ad',
+  90 => 'vip.live.com',
+  91 => 'vip video',
+  92 => 'vip.ad',
+  93 => 'vipad',
+  94 => 'playerad',
+  95 => 'player_ad',
+  96 => 'preroll',
+  97 => 'postroll',
+  98 => 'midroll',
+  99 => 'videoad',
+  100 => 'video_ad',
+  101 => 'clipad',
+  102 => 'clip_ad',
+  103 => 'mp4ad',
+  104 => 'ad.mp4',
+  105 => 'ad.m3u8',
+  106 => 'ad_',
+  107 => 'promo',
+  108 => 'promotion',
+  109 => 'sponsor',
+  110 => 'sponsored',
+  111 => 'featured',
+  112 => 'recommend_ad',
+  113 => 'hotspot',
+  114 => 'hot_ad',
+  115 => 'banner',
+  116 => 'bannerad',
+  117 => 'floatad',
+  118 => 'float_ad',
+  119 => 'logo',
+  120 => 'overlay',
+  121 => 'overlay_ad',
+  122 => 'watermark_ad',
+  123 => 'skip',
+  124 => 'skipad',
+  125 => 'skip_ad',
+  126 => 'jumpad',
+  127 => 'countdown',
+  128 => 'countdown_ad',
+  129 => 'adcountdown',
+  130 => 'logo_',
+  131 => '_logo',
+  132 => 'logo.',
+  133 => 'corner_ad',
+  134 => 'preroll_',
+  135 => '_preroll',
+  136 => 'postroll_',
+  137 => '_postroll',
+  138 => 'short_',
+  139 => '_short',
+  140 => 'teaser',
+  141 => 'teaser_ad',
+  142 => 'trailer_ad',
+  143 => '_trailer',
+  144 => 'intro_ad',
+  145 => 'outro_ad',
+  146 => 'bumper',
+  147 => 'bumper_ad',
+  148 => 'commercial',
+  149 => 'commercials',
+  150 => 'ad_content',
+  151 => 'ad_clip',
+  152 => 'adsegment',
+  153 => 'ad_seg',
+  154 => 'adv_seg',
+  155 => 'adpiece',
+  156 => 'breakpoint',
+  157 => 'ad_break',
+  158 => 'adblock',
+  159 => 'block_ad',
+  160 => 'noncontent',
+  161 => 'non_content',
+  162 => 'placeholder_ad',
+),
+    'whitelist_keywords' => array (
+  0 => 'main',
+  1 => 'content',
+  2 => 'video',
+  3 => '正片',
+  4 => '正集',
+  5 => '正片高清',
+  6 => 'movie',
+  7 => 'film',
+  8 => 'episode',
+  9 => 'ep',
+  10 => 'clip',
+  11 => 'clips',
+  12 => 'part',
+  13 => 'chapter',
+  14 => 'segment',
+  15 => 'seg',
+  16 => 'trailer',
+  17 => '预告',
+  18 => 'preview',
+  19 => 'preview',
+  20 => 'opening',
+  21 => 'op',
+  22 => 'ending',
+  23 => 'ed',
+  24 => '片头',
+  25 => '片尾',
+  26 => 'hd',
+  27 => 'fhd',
+  28 => '4k',
+  29 => 'uhd',
+  30 => '1080',
+  31 => '1080p',
+  32 => '720',
+  33 => '720p',
+  34 => '540',
+  35 => '480',
+  36 => '360',
+  37 => 'br',
+  38 => 'bitrate',
+  39 => 'h264',
+  40 => 'h265',
+  41 => 'hevc',
+  42 => 'avc',
+  43 => 'av1',
+  44 => 'audio',
+  45 => 'audio_',
+  46 => '_audio',
+  47 => 'aac',
+  48 => 'mp3',
+  49 => 'subtitle',
+  50 => 'subtitle_',
+  51 => '_subtitle',
+  52 => 'subtitle',
+  53 => 'caption',
+  54 => 'caption_',
+  55 => 'chn',
+  56 => 'cn',
+  57 => 'eng',
+  58 => 'zho',
+  59 => 'playlist',
+  60 => 'index',
+  61 => 'master',
+  62 => 'variant',
+  63 => 'chunklist',
+  64 => 'seg',
+  65 => 'segment',
+  66 => 'stream',
+  67 => 'live',
+  68 => 'vod',
+  69 => 'll-hls',
+  70 => 'dvr',
+  71 => 'aliyun',
+  72 => 'aliyuncs',
+  73 => 'alibaba',
+  74 => 'alibabacdn',
+  75 => 'tencent',
+  76 => 'cdntc',
+  77 => 'myqcloud',
+  78 => 'qcloud',
+  79 => 'bytedance',
+  80 => 'bytedns',
+  81 => 'bdydns',
+  82 => 'bytecdn',
+  83 => 'kuaishou',
+  84 => 'ksurl',
+  85 => 'kscdn',
+  86 => 'bilibili',
+  87 => 'bili',
+  88 => 'hdslb',
+  89 => 'iQiyi',
+  90 => 'iqiyi',
+  91 => 'qiyi',
+  92 => 'youku',
+  93 => 'ykimg',
+  94 => 'img',
+  95 => 'ykcdn',
+  96 => 'mgtv',
+  97 => 'hunantv',
+  98 => 'imgv',
+  99 => 'sohu',
+  100 => 'sohuv',
+  101 => 'vms',
+  102 => 'letv',
+  103 => 'lespark',
+  104 => 'lescdn',
+  105 => 'migu',
+  106 => 'cmcc',
+  107 => 'cmvod',
+  108 => 'pps',
+  109 => 'pptv',
+  110 => 'pplive',
+  111 => 'wasu',
+  112 => 'wasucloud',
+  113 => 'xunlei',
+  114 => 'xlwebcloud',
+  115 => 'baiducloud',
+  116 => 'bcehost',
+  117 => 'stream',
+  118 => 'live',
+  119 => 'onair',
+  120 => 'on_air',
+  121 => 'source',
+  122 => 'src',
+  123 => 'origin',
+),
+    'resource_types' => array (
+  1 => 
+  array (
+    'key' => 'movie',
+    'name' => '🎬 电影资源',
+    'icon' => '🎬',
+  ),
+  2 => 
+  array (
+    'key' => 'tv',
+    'name' => '📺 电视剧集',
+    'icon' => '📺',
+  ),
+  3 => 
+  array (
+    'key' => 'variety',
+    'name' => '🎤 综艺娱乐',
+    'icon' => '🎤',
+  ),
+  4 => 
+  array (
+    'key' => 'anime',
+    'name' => '🎭 动漫动画',
+    'icon' => '🎭',
+  ),
+  5 => 
+  array (
+    'key' => 'document',
+    'name' => '📚 纪录片',
+    'icon' => '📚',
+  ),
+  6 => 
+  array (
+    'key' => 'sports',
+    'name' => '⚽ 体育赛事',
+    'icon' => '⚽',
+  ),
+  7 => 
+  array (
+    'key' => 'short',
+    'name' => '📱 短视频',
+    'icon' => '📱',
+  ),
+),
+    'default_sources' => array (
+  0 => 
+  array (
+    'name' => 'Noad-主源',
+    'url' => 'https://jx.playerjy.com/?url={url}',
+    'timeout' => 8,
+    'type' => 1,
+  ),
+  1 => 
+  array (
+    'name' => 'Noad-备源1',
+    'url' => 'https://www.yemu.xyz/?url={url}',
+    'timeout' => 8,
+    'type' => 1,
+  ),
+  2 => 
+  array (
+    'name' => 'Noad-备源2',
+    'url' => 'https://jx.xmflv.com/?url={url}',
+    'timeout' => 8,
+    'type' => 2,
+  ),
+  3 => 
+  array (
+    'name' => 'Noad-备源3',
+    'url' => 'https://jx.aidouer.net/?url={url}',
+    'timeout' => 10,
+    'type' => 2,
+  ),
+),
+    'resource_sites' => array (
+  0 => 
+  array (
+    'name' => '电影天堂',
+    'short_code' => 'dytt',
+    'base_url' => 'https://www.dytt8.com',
+    'patterns' => 
+    array (
+      0 => 'dytt',
+      1 => '电影天堂',
+      2 => 'dy8',
+      3 => 'dianyingtiantang',
     ),
-
-    // ========== 广告白名单（防止误伤） ==========
-    // 说明: 命中以下关键词的片段无论是否命中广告规则都将保留
-    "whitelist_keywords" => array(
-        // ========== 正片/内容相关 ==========
-        "main", "content", "video", "正片", "正集", "正片高清",
-        "movie", "film", "episode", "ep", "clip", "clips",
-        "part", "chapter", "segment", "seg",
-        "trailer", "预告", "preview", "preview",
-        "opening", "op", "ending", "ed", "片头", "片尾",
-
-        // ========== 分辨率/画质 ==========
-        "hd", "fhd", "4k", "uhd", "1080", "1080p", "720", "720p",
-        "540", "480", "360", "br", "bitrate", "h264", "h265",
-        "hevc", "avc", "av1",
-
-        // ========== 音频/字幕 ==========
-        "audio", "audio_", "_audio", "aac", "mp3",
-        "subtitle", "subtitle_", "_subtitle", "subtitle",
-        "caption", "caption_", "chn", "cn", "eng", "zho",
-
-        // ========== 播放列表相关 ==========
-        "playlist", "index", "master", "variant",
-        "chunklist", "seg", "segment", "stream",
-        "live", "vod", "ll-hls", "dvr",
-
-        // ========== CDN/源站白名单 ==========
-        "aliyun", "aliyuncs", "alibaba", "alibabacdn",
-        "tencent", "cdntc", "myqcloud", "qcloud",
-        "bytedance", "bytedns", "bdydns", "bytecdn",
-        "kuaishou", "ksurl", "kscdn",
-        "bilibili", "bili", "hdslb",
-        "iQiyi", "iqiyi", "qiyi",
-        "youku", "ykimg", "img", "ykcdn",
-        "mgtv", "hunantv", "imgv",
-        "sohu", "sohuv", "vms",
-        "letv", "lespark", "lescdn",
-        "migu", "cmcc", "cmvod",
-        "pps", "pptv", "pplive",
-        "wasu", "wasucloud",
-        "xunlei", "xlwebcloud",
-        "baiducloud", "bcehost",
-
-        // ========== 通用安全词 ==========
-        "stream", "live", "onair", "on_air",
-        "source", "src", "origin",
+    'algorithms' => 
+    array (
+      0 => 'suanfasmall',
+      1 => 'suanfa3',
+      2 => 'suanfadyt',
     ),
-
-    // ========== 7 种资源类型分类 ==========
-    "resource_types" => array(
-        1 => array("key" => "movie",    "name" => "🎬 电影资源", "icon" => "🎬"),
-        2 => array("key" => "tv",       "name" => "📺 电视剧集", "icon" => "📺"),
-        3 => array("key" => "variety",  "name" => "🎤 综艺娱乐", "icon" => "🎤"),
-        4 => array("key" => "anime",    "name" => "🎭 动漫动画", "icon" => "🎭"),
-        5 => array("key" => "document", "name" => "📚 纪录片", "icon" => "📚"),
-        6 => array("key" => "sports",   "name" => "⚽ 体育赛事", "icon" => "⚽"),
-        7 => array("key" => "short",    "name" => "📱 短视频", "icon" => "📱"),
+    'priority' => 1,
+    'enabled' => true,
+  ),
+  1 => 
+  array (
+    'name' => '西瓜资源',
+    'short_code' => 'xg',
+    'base_url' => 'https://www.360kan.com',
+    'patterns' => 
+    array (
+      0 => 'xigua',
+      1 => 'xiguang',
+      2 => '西瓜',
+      3 => '360kan',
+      4 => 'ixigua',
+      5 => 'ixg',
     ),
-
-    // ========== 资源站去广告开关（v4.1.0 新增）==========
-    "enable_resource_site_cleaning" => true,   // 启用资源站域名识别 + suanfa 算法清理
-    "resource_site_debug" => false,            // 是否返回资源站识别信息（供调试）
-
-    // ========== 自定义算法扩展（v4.2 新增）==========
-    "enable_custom_algorithms" => true,        // 启用 /algorithms 目录下的自定义算法扩展
-    "custom_algorithms_scope" => "all",        // 默认作用域: all / url / m3u8
-
-    // ========== 如意解析源专属去广告算法（如意 v2.0+ 配置）==========
-    // 说明: 针对如意（ryiplay/如意资源站的 M3U8 去广告参数
-    //       该算法会自动分析 M3U8 片段的广告片段进行清理。
-    //       默认参数: 针对资源站通用，但可调节 50~60s 为视频测试
-    "ruyi_enabled" => true,                    // 启用如意专属算法开关（默认
-    "ruyi_score_threshold" => 4,                  // Score 阈值 = 0 表示不限制，数值越大越严格越保守）
-    "ruyi_baseline_sec" => 4.00,                  // 资源站标准片段时长（秒）：通常是视频编码标准单元，用于判断哪些片段时长偏离正常值属于异常并由并非常规片段
-    "ruyi_baseline_tolerance" => 0.10,             // 基准时长容差（秒）：±0.10s 内都算正常片段
-    "ruyi_min_cluster_len" => 3,                     // 广告簇最小长度：连续多少个非基准时长片段为广告
-    "ruyi_max_cluster_len" => 15,                    // 广告簇最大长度（超过视为正片内容
-    "ruyi_min_cluster_sum" => 15.0,                  // 广告簇最小总时长（秒）：广告块总时长阈值
-    "ruyi_max_cluster_sum" => 35.0,                  // 广告簇最大总时长（秒）：广告块总时长上限
-    "ruyi_short_seg_threshold" => 3.0,                  // 短片段阈值（秒）：时长 < 此值的独立片段标记为广告候选
-    "ruyi_very_short_threshold" => 1.5,               // 极短片段阈值（秒）： < 此值直接判定为广告过渡/推广
-    "ruyi_enable_discontinuity" => true,              // 启用 DISCONTINUITY 标记辅助判断
-    "ruyi_auto_optimize_enabled" => true,            // 每天自动检测和自动优化算法参数
-    "ruyi_auto_optimize_hour" => 3,              // 自动检测的时间：3点进行检测 服务器空闲时间执行，单位：小时（0~23)
-    "ruyi_auto_optimize_interval_hours" => 24,        // 自动检测的间隔（小时），24=每天一次
-    "ruyi_auto_optimize_sample_url" => "",           // 自动检测用的示例视频 URL（用于自动检测优化算法去广告效率（为空会自动选择随机选择个视频测试
-    "ruyi_debug_mode" => false,                         // 调试模式：返回详细的识别信息（调试专用
-
-    // ==================================================================
-    // ========== 🎯 万能规则1 - MD5 指纹去广告（v5.0 新增）==============
-    // ==================================================================
-    // 核心原理：广告片段会在不同视频/不同集数中重复出现 → MD5 指纹具有高频率重复特征
-    //          而正片内容是独一无二的 → 通过统计 MD5 出现次数自动识别广告
-    // 优点：与内容无关、自动学习、跨资源站通用
-    // 缺点：首次播放需要积累样本（通常 2-3 次相同广告后才会生效）
-    "md5_enabled" => true,                      // 启用 MD5 指纹去广告（万能规则1 主开关）
-    "md5_repeat_threshold" => 3,                 // MD5 重复次数阈值：相同 MD5 出现在不同视频中 >= 此值 → 判定为广告（默认3，越小越激进）
-    "md5_max_concurrency" => 6,                  // 最大并发下载数（会被服务器健康度动态调整：CPU高时自动降低）
-    "md5_segment_timeout" => 15,                  // 单个片段下载超时（秒），防止卡死
-    "md5_total_timeout" => 60,                    // 总处理超时（秒），整视频处理超过此时间立即停止（保护服务器）
-    "md5_max_segment_kb" => 5000,                // 单个片段最大大小（KB），超过则跳过（防止下载超大文件）
-    "md5_use_proxy" => true,                     // 启用代理池（降低 IP 被封禁风险）
-    "md5_min_interval_ms" => 100,                // 最小请求间隔（毫秒），防止请求过快被识别
-    "md5_proxy_pool" => array(                   // MD5 专用代理池（与如意共享，可写额外代理），格式: "http://ip:port" 或 "http://user:pass@ip:port"
-        // "http://127.0.0.1:7890",
-        // "http://127.0.0.1:10809",
+    'algorithms' => 
+    array (
+      0 => 'suanfaxiguang',
+      1 => 'suanfa5',
+      2 => 'suanfa9',
     ),
-    "md5_auto_learn" => true,                    // 启用自动学习：每次解析自动记录新 MD5 指纹（越用越准）
-    "md5_db_cleanup_days" => 30,                 // 清理 N 天前的片段记录（控制数据库大小）
-    "md5_debug" => false,                         // 调试模式：返回 MD5 指纹和识别详情
-
-    // ==================================================================
-    // ========== 🎯 万能规则2 - 批量解析特征学习（v6.0 新增）==============
-    // ==================================================================
-    // 核心原理：利用多个专业去广告解析接口批量解析同一视频 → 提取共识内容 → 建立特征库
-    //          - 多个解析源共同出现的片段/域名 = 正片特征（高可信度）
-    //          - 某个解析源独有的片段/域名 = 广告特征
-    // 优点：不需要下载 TS 文件、自动学习、跨资源站通用、与 MD5 规则互补
-    // 缺点：需要依赖公共解析源（可自定义配置），首次播放需要学习
-    // 低资源优化：默认并发=2、最多调用3个解析源、采样分析、超时保护
-    "feat_enabled" => true,                      // 启用万能规则2（批量解析特征学习）
-    "feat_max_sources" => 3,                      // 最多调用多少个解析源（越多越准但越慢，默认3）
-    "feat_source_timeout" => 15,                   // 单个解析源超时（秒），防止卡死
-    "feat_total_timeout" => 60,                   // 总处理超时（秒），保护服务器
-    "feat_min_votes" => 2,                        // 最少投票数：至少 N 个解析源一致才信任，默认2
-    "feat_low_resource_mode" => true,              // 低资源模式：检查 CPU/内存负载，过载自动降级
-    "feat_max_concurrency" => 2,                   // 并发请求上限（默认2，差服务器建议1-2）
-    "feat_sample_count" => 15,                   // 采样片段数：对每视频采样分析（减少数据库写入）
-    "feat_learn_enabled" => true,                // 启用自动学习：每次解析自动学习新特征
-    "feat_use_proxy" => true,                     // 启用代理池（降低 IP 被封禁风险）
-    "feat_debug" => false,                         // 调试模式：返回特征学习详情
-
-    // ========== HTTP 代理 & 反封禁（v4.3 新增）==========
-    // 说明: 支持多代理轮换，可避免短时间内对同一源请求过多而被封 IP
-    // 格式: "http://ip:port" 或 "http://user:pass@ip:port"
-    //   示例: "http://127.0.0.1:7890", "http://user:pass@proxy.example.com:8080"
-    "enable_proxy" => false,                   // 是否启用 HTTP 代理（默认关闭，自行填好代理再开）
-    "proxies" => array(                        // 多代理轮换池（启用时随机选择一个，可写多个）
-        // "http://127.0.0.1:7890",
-        // "http://127.0.0.1:10809",
+    'priority' => 2,
+    'enabled' => true,
+  ),
+  2 => 
+  array (
+    'name' => '如意资源',
+    'short_code' => 'ry',
+    'base_url' => 'https://jx.ruyi.com',
+    'patterns' => 
+    array (
+      0 => 'ruyi',
+      1 => '如意',
+      2 => 'ry.jx',
+      3 => 'ryplayer',
     ),
-    "proxy_failover" => true,                  // 若代理请求失败，自动退回到直连（避免因某个代理挂掉整体不可用）
-    "proxy_random_user_agent" => true,         // 随机化 UA（推荐开启，进一步降低被识别为爬虫）
-
-    // ========== 速率限制（v4.3 新增）==========
-    // 说明: 对同一个视频源 URL 的解析请求做最小间隔限制，避免过于频繁请求
-    "enable_rate_limit" => true,               // 是否启用速率限制
-    "rate_limit_min_interval_ms" => 350,       // 同域名最小请求间隔（毫秒），默认 350ms
-    "rate_limit_burst_jitter_ms" => 250,       // 额外随机抖动（毫秒），让请求间隔不均匀，更难识别
-    "rate_limit_concurrent_max" => 4,          // 同一时刻最大并发请求数（针对解析源，避免同时发太多）
-
-    // ========== 请求伪装（v4.3 新增）==========
-    "request_random_delay" => true,            // 顺序请求时每个请求之间加 50~250ms 随机延迟
-    "request_retry_on_failure" => 1,           // 请求失败自动重试次数（默认 1 次，可设 0 关闭）
-    "request_custom_headers" => array(         // 自定义请求头（可覆盖默认）
-        // "X-Custom-Header" => "value",
+    'algorithms' => 
+    array (
+      0 => 'suanfa8',
+      1 => 'suanfa4',
+      2 => 'suanfa5',
     ),
-
-    // ========== 预置资源站（后台会从配置 + 数据库合并）==========
-    "resource_sites" => array(
-        // 电影天堂 (dytt)
-        array(
-            "name"          => "电影天堂",
-            "short_code"    => "dytt",
-            "base_url"      => "https://www.dytt8.com",
-            "patterns"      => array("dytt", "电影天堂", "dy8", "dianyingtiantang"),
-            "algorithms"    => array("suanfasmall", "suanfa3", "suanfadyt"),
-            "priority"      => 1,
-            "enabled"       => true,
-        ),
-        // 西瓜视频 (xigua / xiguang)
-        array(
-            "name"          => "西瓜资源",
-            "short_code"    => "xg",
-            "base_url"      => "https://www.360kan.com",
-            "patterns"      => array("xigua", "xiguang", "西瓜", "360kan", "ixigua", "ixg"),
-            "algorithms"    => array("suanfaxiguang", "suanfa5", "suanfa9"),
-            "priority"      => 2,
-            "enabled"       => true,
-        ),
-        // 如意资源站
-        array(
-            "name"          => "如意资源",
-            "short_code"    => "ry",
-            "base_url"      => "https://jx.ruyi.com",
-            "patterns"      => array("ruyi", "如意", "ry.jx", "ryplayer"),
-            "algorithms"    => array("suanfa8", "suanfa4", "suanfa5"),
-            "priority"      => 3,
-            "enabled"       => true,
-        ),
-        // 爱奇艺
-        array(
-            "name"          => "爱奇艺去广告",
-            "short_code"    => "iqiyi",
-            "base_url"      => "https://www.iqiyi.com",
-            "patterns"      => array("iqiyi", "爱奇艺", "qiyi"),
-            "algorithms"    => array("suanfa9", "suanfa5", "suanfa4"),
-            "priority"      => 5,
-            "enabled"       => true,
-        ),
-        // 腾讯视频
-        array(
-            "name"          => "腾讯视频去广告",
-            "short_code"    => "qq",
-            "base_url"      => "https://v.qq.com",
-            "patterns"      => array("qq.com", "腾讯", "v.qq", "video.qq"),
-            "algorithms"    => array("suanfa7", "suanfa4", "suanfa5", "suanfa1"),
-            "priority"      => 5,
-            "enabled"       => true,
-        ),
-        // 优酷
-        array(
-            "name"          => "优酷去广告",
-            "short_code"    => "youku",
-            "base_url"      => "https://www.youku.com",
-            "patterns"      => array("youku", "优酷", "yk", "v.youku"),
-            "algorithms"    => array("suanfa7", "suanfa4", "suanfa5", "suanfa1"),
-            "priority"      => 5,
-            "enabled"       => true,
-        ),
-        // 芒果 TV
-        array(
-            "name"          => "芒果 TV",
-            "short_code"    => "mgtv",
-            "base_url"      => "https://www.mgtv.com",
-            "patterns"      => array("mgtv", "芒果", "hunantv", "mgtv.com"),
-            "algorithms"    => array("suanfa7", "suanfa4", "suanfa5"),
-            "priority"      => 6,
-            "enabled"       => true,
-        ),
+    'priority' => 3,
+    'enabled' => true,
+  ),
+  3 => 
+  array (
+    'name' => '爱奇艺去广告',
+    'short_code' => 'iqiyi',
+    'base_url' => 'https://www.iqiyi.com',
+    'patterns' => 
+    array (
+      0 => 'iqiyi',
+      1 => '爱奇艺',
+      2 => 'qiyi',
     ),
-
-    // ========== 默认去广告解析接口（多源自动匹配）==========
-    // 可在后台可视化管理，无需改代码；若接口返回的 M3U8 会自动清洗广告
-    "default_sources" => array(
-        array("name" => "Noad-主源",  "url" => "https://jx.playerjy.com/?url={url}", "timeout" => 8, "type" => 1),
-        array("name" => "Noad-备源1", "url" => "https://www.yemu.xyz/?url={url}",     "timeout" => 8, "type" => 1),
-        array("name" => "Noad-备源2", "url" => "https://jx.xmflv.com/?url={url}",    "timeout" => 8, "type" => 2),
-        array("name" => "Noad-备源3", "url" => "https://jx.aidouer.net/?url={url}",  "timeout" => 10, "type" => 2),
+    'algorithms' => 
+    array (
+      0 => 'suanfa9',
+      1 => 'suanfa5',
+      2 => 'suanfa4',
     ),
-
-    // ========== 数据统计 ==========
-    "stats_enabled" => true,                // 启用访问数据统计
-    "stats_log_request" => true,            // 记录每次解析请求（IP/时间/来源/耗时）
-    "stats_top_limit" => 20,                // 热门统计展示条数
-
-    // ========== SQLite 数据库路径 ==========
-    "sqlite_path" => __DIR__ . "/../cache/noad.db",
+    'priority' => 5,
+    'enabled' => true,
+  ),
+  4 => 
+  array (
+    'name' => '腾讯视频去广告',
+    'short_code' => 'qq',
+    'base_url' => 'https://v.qq.com',
+    'patterns' => 
+    array (
+      0 => 'qq.com',
+      1 => '腾讯',
+      2 => 'v.qq',
+      3 => 'video.qq',
+    ),
+    'algorithms' => 
+    array (
+      0 => 'suanfa7',
+      1 => 'suanfa4',
+      2 => 'suanfa5',
+      3 => 'suanfa1',
+    ),
+    'priority' => 5,
+    'enabled' => true,
+  ),
+  5 => 
+  array (
+    'name' => '优酷去广告',
+    'short_code' => 'youku',
+    'base_url' => 'https://www.youku.com',
+    'patterns' => 
+    array (
+      0 => 'youku',
+      1 => '优酷',
+      2 => 'yk',
+      3 => 'v.youku',
+    ),
+    'algorithms' => 
+    array (
+      0 => 'suanfa7',
+      1 => 'suanfa4',
+      2 => 'suanfa5',
+      3 => 'suanfa1',
+    ),
+    'priority' => 5,
+    'enabled' => true,
+  ),
+  6 => 
+  array (
+    'name' => '芒果 TV',
+    'short_code' => 'mgtv',
+    'base_url' => 'https://www.mgtv.com',
+    'patterns' => 
+    array (
+      0 => 'mgtv',
+      1 => '芒果',
+      2 => 'hunantv',
+      3 => 'mgtv.com',
+    ),
+    'algorithms' => 
+    array (
+      0 => 'suanfa7',
+      1 => 'suanfa4',
+      2 => 'suanfa5',
+    ),
+    'priority' => 6,
+    'enabled' => true,
+  ),
+),
+    'stats_enabled' => true,
+    'stats_log_request' => true,
+    'stats_top_limit' => 20,
+    'sqlite_path' => __DIR__ . '/../cache/noad.db',
+    // ========= 如意去广告算法（Ruyi Pattern Cleaner v2.1） =========
+    // 算法开关：true=启用 false=关闭（关闭后完全跳过如意算法，仅使用其他广告过滤）
+    'ruyi_enabled' => false,
+    // Score 阈值：分数 >=此值的片段簇被视为广告。推荐值：3=保守, 4=平衡(默认), 5=激进
+    'ruyi_score_threshold' => 4,
+    // 基准片段时长（秒）：资源站标准视频片段时长。其他时长被视为候选广告片段
+    'ruyi_baseline_sec' => 4,
+    // 基准容差（秒）：基准 ±此值范围内都视为正常视频片段。默认 0.10
+    'ruyi_baseline_tolerance' => 0.1,
+    // 广告簇最小长度：连续非基准时长片段数量 >=此值才视为候选广告（太短=可能是正常场景切换）
+    'ruyi_min_cluster_len' => 3,
+    // 广告簇最大长度：超过此长度视为正常内容（如纪录片的复杂片段），默认 15
+    'ruyi_max_cluster_len' => 15,
+    // 广告簇最小总时长（秒）：片段组总时长 >=此值才是完整广告块，默认 15
+    'ruyi_min_cluster_sum' => 15,
+    // 广告簇最大总时长（秒）：超过此值的长片段组=正片内容，默认 35
+    'ruyi_max_cluster_sum' => 35,
+    // 短片段阈值（秒）：片段时长 <此值视为广告强信号，默认 3.0
+    'ruyi_short_seg_threshold' => 3,
+    // 极短片段阈值（秒）：片段时长 <此值 =直接删除（广告过渡/收尾标志），默认 1.5
+    'ruyi_very_short_threshold' => 1.5,
+    // DISCONTINUITY 信号：启用 M3U8 中编码断层标记（典型为广告插入点）辅助判断
+    'ruyi_enable_discontinuity' => false,
+    // 每天自动检测优化：每天指定时间，系统自动用示例视频测试并调整参数
+    'ruyi_auto_optimize_enabled' => false,
+    // 自动检测执行时间（0~23 小时），推荐凌晨 3 点，默认 3
+    'ruyi_auto_optimize_hour' => 3,
+    // 自动检测间隔（小时），24=每天一次，12=12小时一次，默认 24
+    'ruyi_auto_optimize_interval_hours' => 24,
+    // 自动检测示例视频 URL（为空时随机选择解析源），可填写经常观看的视频地址
+    'ruyi_auto_optimize_sample_url' => '',
+    // 调试模式：true =在 M3U8 中加入调试标记（开发专用），默认 false
+    'ruyi_debug_mode' => false,
+    // ========================================================
+    // ===== MD5 指纹去广告参数（万能规则1） =================
+    'md5_enabled' => false,
+    'md5_repeat_threshold' => 3,
+    'md5_max_concurrency' => 6,
+    'md5_segment_timeout' => 15,
+    'md5_total_timeout' => 60,
+    'md5_max_segment_kb' => 5000,
+    'md5_use_proxy' => false,
+    'md5_min_interval_ms' => 100,
+    'md5_auto_learn' => false,
+    'md5_db_cleanup_days' => 30,
+    'md5_debug' => false,
+    // ========================================================
+    // ===== 批量解析特征学习参数（万能规则2） =================
+    'feat_enabled' => true,
+    'feat_max_sources' => 3,
+    'feat_source_timeout' => 15,
+    'feat_total_timeout' => 60,
+    'feat_min_votes' => 2,
+    'feat_low_resource_mode' => true,
+    'feat_max_concurrency' => 2,
+    'feat_sample_count' => 15,
+    'feat_learn_enabled' => true,
+    'feat_use_proxy' => true,
+    'feat_debug' => false,
 );
