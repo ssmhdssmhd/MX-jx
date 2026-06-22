@@ -1325,6 +1325,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         <button data-tab="test" class="<?php echo $page==='test'?'active':''; ?>">🧪 接口测试</button>
         <button data-tab="custom_algorithms" class="<?php echo $page==='custom_algorithms'?'active':''; ?>">🧩 算法</button>
         <button data-tab="feat" class="<?php echo $page==='feat'?'active':''; ?>">🎯 规则2</button>
+        <button data-tab="tools" class="<?php echo $page==='tools'?'active':''; ?>">🧰 工具管理</button>
         <button data-tab="backup" class="<?php echo $page==='backup'?'active':''; ?>">💾 备份</button>
         <button data-tab="password" class="<?php echo $page==='password'?'active':''; ?>">🔐 密码</button>
         <button data-tab="setting" class="<?php echo $page==='setting'?'active':''; ?>">🛠️ 后台设置</button>
@@ -2332,7 +2333,175 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     </div>
 
     <?php
-    // ===== 16. 配置备份 =====
+    // ===== 16. 工具管理 =====
+    ?>
+    <div class="tab-panel <?php echo $page==='tools'?'active':''; ?>" id="tab-tools">
+        <h2>🧰 工具管理</h2>
+        
+        <div class="panel" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:20px;">
+            <h3 style="color:#fff;margin-bottom:15px">⚡ 综合分析</h3>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <input type="text" id="comboInput" placeholder="粘贴 M3U8 链接或内容..." style="flex:1;min-width:300px;padding:10px;border:none;border-radius:8px;font-size:14px;">
+                <select id="comboMode" style="padding:10px;border:none;border-radius:8px;font-size:14px;">
+                    <option value="auto">自动识别</option>
+                    <option value="m3u8">M3U8格式</option>
+                    <option value="url">URL格式</option>
+                </select>
+                <button onclick="comboAnalyze()" class="btn-primary-sm" style="padding:10px 24px;font-size:14px;">开始分析</button>
+            </div>
+            <div id="comboResult" style="margin-top:15px;padding:15px;background:rgba(255,255,255,0.15);border-radius:8px;display:none;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+                    <div>
+                        <h4 style="margin:0 0 10px 0">🔑 特征码摘要</h4>
+                        <div id="featureSummary" style="font-size:13px;line-height:1.6;"></div>
+                    </div>
+                    <div>
+                        <h4 style="margin:0 0 10px 0">🧹 去广告摘要</h4>
+                        <div id="adSummary" style="font-size:13px;line-height:1.6;"></div>
+                    </div>
+                </div>
+                <div style="margin-top:15px;">
+                    <h4 style="margin:0 0 10px 0">📝 完整结果 JSON</h4>
+                    <pre id="comboJson" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;font-size:12px;max-height:300px;overflow-y:auto;"></pre>
+                </div>
+            </div>
+            <div id="comboLoading" style="margin-top:15px;padding:15px;background:rgba(255,255,255,0.15);border-radius:8px;display:none;">
+                <div style="text-align:center;">
+                    <div style="font-size:32px;margin-bottom:8px;">🔄</div>
+                    <div>分析中，请稍候...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>🔧 工具列表</h3>
+            <div id="toolsList" style="min-height:200px;padding:10px;background:#f8f9fa;border-radius:8px;">
+                <div style="text-align:center;color:#888;padding:40px;">
+                    <div style="font-size:48px;margin-bottom:12px;">🔧</div>
+                    <div>加载工具列表中...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function loadToolsList() {
+        fetch('?action=ajax_tools_list', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+        }).then(r => r.json()).then(data => {
+            if (data.code === 200 && data.tools) {
+                let html = '';
+                for (let group in data.tools) {
+                    html += '<div style="margin-bottom:20px;">';
+                    html += '<h4 style="margin:0 0 12px 0;color:#555;font-size:14px;">' + htmlEscape(group) + '</h4>';
+                    html += '<div style="display:flex;flex-wrap:gap:10px;">';
+                    data.tools[group].forEach(tool => {
+                        html += '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:15px;margin-right:15px;margin-bottom:15px;min-width:280px;">';
+                        html += '<div style="font-weight:600;color:#333;margin-bottom:4px;">' + htmlEscape(tool.name) + '</div>';
+                        html += '<div style="font-size:12px;color:#888;margin-bottom:10px;">' + htmlEscape(tool.description) + '</div>';
+                        html += '<button onclick="runTool(\'' + htmlEscape(tool.id) + '\')" class="btn-primary-sm" style="font-size:12px;">▶ 执行</button>';
+                        html += '</div>';
+                    });
+                    html += '</div></div>';
+                }
+                document.getElementById('toolsList').innerHTML = html;
+            } else {
+                document.getElementById('toolsList').innerHTML = '<div style="text-align:center;color:#888;padding:40px;">❌ 加载失败</div>';
+            }
+        }).catch(e => {
+            document.getElementById('toolsList').innerHTML = '<div style="text-align:center;color:#888;padding:40px;">❌ 加载失败: ' + e.message + '</div>';
+        });
+    }
+
+    function runTool(toolId) {
+        fetch('?action=ajax_tools_run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'tool_id=' + encodeURIComponent(toolId) + '&params=' + encodeURIComponent(JSON.stringify({input: 'test'}))
+        }).then(r => r.json()).then(data => {
+            if (data.code === 200) {
+                alert(JSON.stringify(data.result, null, 2));
+            } else {
+                alert('执行失败: ' + (data.message || '未知错误'));
+            }
+        }).catch(e => {
+            alert('请求失败: ' + e.message);
+        });
+    }
+
+    function comboAnalyze() {
+        const input = document.getElementById('comboInput').value.trim();
+        if (!input) {
+            alert('请输入内容');
+            return;
+        }
+        const mode = document.getElementById('comboMode').value;
+        
+        document.getElementById('comboResult').style.display = 'none';
+        document.getElementById('comboLoading').style.display = 'block';
+        
+        fetch('?action=ajax_tools_combo', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'input=' + encodeURIComponent(input) + '&mode=' + encodeURIComponent(mode)
+        }).then(r => {
+            if (!r.ok) throw new Error('HTTP error ' + r.status);
+            return r.text();
+        }).then(text => {
+            try {
+                const data = JSON.parse(text);
+                if (data.code === 200) {
+                    document.getElementById('featureSummary').innerHTML = formatFeatureSummary(data.feature);
+                    document.getElementById('adSummary').innerHTML = formatAdSummary(data.ad_clean);
+                    document.getElementById('comboJson').textContent = JSON.stringify(data, null, 2);
+                    document.getElementById('comboResult').style.display = 'block';
+                } else {
+                    alert(data.msg || '分析失败');
+                }
+            } catch (e) {
+                alert('解析结果失败: ' + e.message);
+            }
+        }).catch(e => {
+            alert('请求失败: ' + e.message);
+        }).finally(() => {
+            document.getElementById('comboLoading').style.display = 'none';
+        });
+    }
+
+    function formatFeatureSummary(feature) {
+        if (!feature || !feature.success) return '<div style="color:#f87171;">❌ 特征提取失败</div>';
+        const data = feature.data || {};
+        let html = '';
+        if (data.md5_signatures) html += '<div>MD5指纹数: <strong>' + data.md5_signatures.length + '</strong></div>';
+        if (data.domain_counts) html += '<div>域名数: <strong>' + Object.keys(data.domain_counts).length + '</strong></div>';
+        if (data.global_signature) html += '<div>SHA1签名: <code style="font-size:11px;">' + data.global_signature + '</code></div>';
+        return html || '<div style="color:#666;">暂无数据</div>';
+    }
+
+    function formatAdSummary(adClean) {
+        if (!adClean || !adClean.success) return '<div style="color:#f87171;">❌ 去广告失败</div>';
+        const data = adClean.data || {};
+        let html = '';
+        if (data.total !== undefined) html += '<div>总片段: <strong>' + data.total + '</strong></div>';
+        if (data.removed !== undefined) html += '<div>移除广告: <strong style="color:#ef4444;">' + data.removed + '</strong></div>';
+        if (data.kept !== undefined) html += '<div>保留正片: <strong style="color:#22c55e;">' + data.kept + '</strong></div>';
+        return html || '<div style="color:#666;">暂无数据</div>';
+    }
+
+    function htmlEscape(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        if (document.getElementById('tab-tools')) {
+            loadToolsList();
+        }
+    });
+    </script>
+
+    <?php
+    // ===== 17. 配置备份 =====
     ?>
     <div class="tab-panel <?php echo $page==='backup'?'active':''; ?>" id="tab-backup">
         <h2>💾 配置备份</h2>
