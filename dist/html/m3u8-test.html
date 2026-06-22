@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M3U8 测试中心 - 沫兮万能解析</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: linear-gradient(135deg, #1a1a2e, #16213e);
+        color: #e8e8e8;
+        padding: 30px 20px;
+        min-height: 100vh;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 26px; margin-bottom: 20px; text-align: center; }
+    h2 { font-size: 16px; margin-bottom: 12px; color: #a8b4ff; font-weight: 600; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 25px; }
+    .card {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px;
+        padding: 18px;
+        transition: all 0.2s;
+    }
+    .stream-card { cursor: pointer; }
+    .stream-card:hover { background: rgba(102, 126, 234, 0.15); border-color: #667eea; }
+    .stream-title { font-weight: 600; font-size: 14px; color: #fff; margin-bottom: 6px; }
+    .stream-url { font-size: 11px; color: #888; word-break: break-all; font-family: monospace; line-height: 1.5; }
+    .stream-meta { margin-top: 8px; font-size: 12px; color: #777; }
+    .stream-badge { display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 4px; background: #667eea33; color: #a8b4ff; margin-right: 6px; }
+    .player-wrapper { background: #000; border-radius: 12px; padding: 8px; margin-bottom: 16px; }
+    video { width: 100%; max-height: 500px; background: #000; border-radius: 8px; display: block; }
+    .input-bar { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
+    input[type="text"] {
+        flex: 1;
+        min-width: 260px;
+        padding: 12px 16px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.15);
+        color: #fff;
+        border-radius: 8px;
+        font-size: 14px;
+        outline: none;
+        font-family: monospace;
+    }
+    input[type="text"]:focus { border-color: #667eea; background: rgba(255,255,255,0.1); }
+    button {
+        padding: 12px 20px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+    button:hover { opacity: 0.9; }
+    .status { padding: 10px 14px; background: rgba(102,126,234,0.1); border-radius: 8px; font-size: 13px; color: #a8b4ff; text-align: center; }
+    .status.error { background: rgba(244,67,54,0.15); color: #ff8a80; }
+    .status.success { background: rgba(76,175,80,0.15); color: #81c784; }
+    .nav-links { margin-top: 25px; text-align: center; font-size: 13px; color: #888; }
+    .nav-links a { color: #a8b4ff; margin: 0 10px; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+    .play-btn { float: right; padding: 6px 14px; background: #667eea; color: #fff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>📺 M3U8 流媒体测试中心</h1>
+
+    <div class="player-wrapper">
+        <video id="video" controls autoplay playsinline></video>
+    </div>
+
+    <div class="status" id="status">选择下方任一测试流，或输入自定义 M3U8 链接</div>
+
+    <div class="input-bar">
+        <input type="text" id="customUrl" placeholder="输入自定义 .m3u8 链接">
+        <button onclick="playCustom()">▶️ 播放</button>
+    </div>
+
+    <h2>🟢 Apple 官方测试流 (HLS 示例)</h2>
+    <div class="grid" id="appleStreams"></div>
+
+    <h2>🎬 公开测试流</h2>
+    <div class="grid" id="publicStreams"></div>
+
+    <div class="nav-links">
+        <a href="index.html">🏠 首页</a>
+        <a href="player.html">▶️ 播放器</a>
+        <a href="api-test.html">🧪 API 调试</a>
+    </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const statusEl = document.getElementById('status');
+let hls = null;
+
+// Apple HLS 官方测试流 (可靠)
+const apple = [
+    { title: 'Apple BipBop 4x3 basic', url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8', type: 'VOD', duration: '10:34' },
+    { title: 'Apple BipBop Advanced fMP4', url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8', type: 'VOD', duration: '10:34' },
+];
+
+// 公开测试流 (可能因 CORS 或源站限制而不可用)
+const publics = [
+    { title: 'Big Buck Bunny (开源动画)', url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8', type: 'VOD', duration: '10:34' },
+    { title: 'Sintel Trailer', url: 'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8', type: 'VOD', duration: '52:00' },
+    { title: 'Tears of Steel', url: 'https://test-streams.mux.dev/test_001/stream.m3u8', type: 'VOD', duration: '12:14' },
+    { title: 'Apple Low Latency HLS', url: 'https://ll-hls-test.apple.com/demo.m3u8', type: 'LIVE', duration: '直播' },
+    { title: 'Mux Test Stream', url: 'https://test-streams.mux.dev/dai-discontinuity-deltatre/manifest.m3u8', type: 'LIVE', duration: '直播' },
+];
+
+function renderStreams(list, containerId) {
+    const el = document.getElementById(containerId);
+    el.innerHTML = '';
+    for (const s of list) {
+        el.innerHTML += `
+            <div class="card stream-card" onclick="playStream('${s.url}')">
+                <span class="play-btn">▶️</span>
+                <div class="stream-title">${s.title}</div>
+                <div class="stream-meta">
+                    <span class="stream-badge">${s.type}</span>
+                    <span>${s.duration}</span>
+                </div>
+                <div class="stream-url" style="margin-top:8px;">${s.url}</div>
+            </div>`;
+    }
+}
+
+function playStream(url) {
+    document.getElementById('customUrl').value = url;
+    loadVideo(url);
+}
+
+function playCustom() {
+    const url = document.getElementById('customUrl').value.trim();
+    if (!url) { alert('请输入 M3U8 链接'); return; }
+    loadVideo(url);
+}
+
+function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = 'status ' + (cls || '');
+}
+
+function loadVideo(url) {
+    setStatus('⏳ 加载中: ' + (url.length > 60 ? url.slice(0,60)+'...' : url));
+    if (hls) { hls.destroy(); hls = null; }
+    video.removeAttribute('src');
+    video.load();
+
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        setStatus('🎬 使用原生 HLS 播放');
+        video.play().catch(() => {});
+    } else if (window.Hls && Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            setStatus('✅ HLS.js 播放中', 'success');
+            video.play().catch(() => {});
+        });
+        hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal) {
+                setStatus('❌ 播放错误: ' + data.details, 'error');
+            }
+        });
+    } else {
+        video.src = url;
+    }
+}
+
+video.addEventListener('playing', () => setStatus('▶️ 播放中 · ' + video.videoWidth + '×' + video.videoHeight, 'success'));
+video.addEventListener('error', () => setStatus('❌ 无法播放该流（可能受 CORS 或源站限制）', 'error'));
+
+document.getElementById('customUrl').addEventListener('keypress', e => { if (e.key === 'Enter') playCustom(); });
+
+renderStreams(apple, 'appleStreams');
+renderStreams(publics, 'publicStreams');
+</script>
+</body>
+</html>
