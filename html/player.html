@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>视频播放器 - 沫兮万能解析</title>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -140,6 +140,42 @@
     .nav-links { margin-top: 20px; text-align: center; font-size: 13px; }
     .nav-links a { color: #888; margin: 0 10px; text-decoration: none; }
     .nav-links a:hover { color: #fff; }
+    .error-panel {
+        display: none;
+        margin-top: 12px;
+        padding: 14px;
+        background: #2a1a1a;
+        border-radius: 8px;
+        border: 1px solid #dc2626;
+        color: #fca5a5;
+        font-family: monospace;
+        font-size: 12px;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    .error-panel.open { display: block; }
+    .loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+        z-index: 10;
+    }
+    .loading-spinner {
+        width: 50px;
+        height: 50px;
+        border: 3px solid #333;
+        border-top-color: #667eea;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -150,12 +186,18 @@
     </div>
 
     <div class="player-card">
-        <video id="video" controls autoplay playsinline>
-            您的浏览器不支持 video 标签
-        </video>
+        <div id="playerWrapper" style="position: relative;">
+            <video id="video" controls autoplay playsinline preload="metadata">
+                <p>您的浏览器不支持 video 标签，请使用 Chrome、Firefox、Safari 等现代浏览器</p>
+            </video>
+            <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+                <div class="loading-spinner"></div>
+            </div>
+        </div>
         <div class="url-bar">
             <input type="text" id="m3u8Url" placeholder="输入 .m3u8 视频链接...">
             <button onclick="loadVideo()">▶️ 播放</button>
+            <button class="secondary" onclick="stopVideo()">⏹️ 停止</button>
             <button class="secondary" onclick="goBack()">← 返回</button>
         </div>
         <div class="status-bar">
@@ -163,7 +205,9 @@
             <span class="status-item">格式：<strong id="formatText">--</strong></span>
             <span class="status-item">分辨率：<strong id="resText">--</strong></span>
             <span class="status-item">时长：<strong id="durText">--</strong></span>
+            <span class="status-item">码率：<strong id="bitrateText">--</strong></span>
         </div>
+        <div id="errorPanel" class="error-panel"></div>
     </div>
 
     <div class="info-card">
@@ -194,52 +238,188 @@ const statusText = document.getElementById('statusText');
 const formatText = document.getElementById('formatText');
 const resText = document.getElementById('resText');
 const durText = document.getElementById('durText');
+const bitrateText = document.getElementById('bitrateText');
+const loadingOverlay = document.getElementById('loadingOverlay');
+const errorPanel = document.getElementById('errorPanel');
 let hls = null;
+let hlsLoaded = false;
 
 function setStatus(text, type) {
     statusText.textContent = text;
     statusText.parentElement.className = 'status-item ' + (type || '');
 }
 
-function loadVideo(src) {
+function showLoading(show) {
+    loadingOverlay.style.display = show ? 'flex' : 'none';
+}
+
+function showError(message) {
+    errorPanel.textContent = message;
+    errorPanel.classList.add('open');
+    console.error('[Player Error]', message);
+}
+
+function hideError() {
+    errorPanel.classList.remove('open');
+    errorPanel.textContent = '';
+}
+
+function stopVideo() {
+    if (hls) {
+        hls.destroy();
+        hls = null;
+    }
+    video.pause();
+    video.src = '';
+    setStatus('已停止', '');
+    formatText.textContent = '--';
+    resText.textContent = '--';
+    durText.textContent = '--';
+    bitrateText.textContent = '--';
+    hideError();
+    showLoading(false);
+}
+
+async function loadVideo(src) {
     const url = src || urlInput.value.trim();
-    if (!url) { setStatus('请输入链接', 'error'); return; }
+    if (!url) {
+        setStatus('请输入链接', 'error');
+        return;
+    }
+
+    // 停止当前播放
+    stopVideo();
+    
     urlInput.value = url;
     setStatus('加载中...', '');
     formatText.textContent = '检测中';
-    resText.textContent = '--';
-    durText.textContent = '--';
+    hideError();
+    showLoading(true);
 
-    // Clean previous instance
-    if (hls) { hls.destroy(); hls = null; }
+    try {
+        // 先验证URL
+        if (!isValidUrl(url)) {
+            throw new Error('无效的 URL 格式');
+        }
 
-    // Native HLS support (Safari / iOS)
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
-        formatText.textContent = '原生 HLS';
-        video.play().catch(() => {});
-    } else if (window.Hls && Hls.isSupported()) {
-        hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            setStatus('就绪', 'success');
-            formatText.textContent = 'HLS.js';
-            video.play().catch(() => {});
-        });
-        hls.on(Hls.Events.ERROR, (e, data) => {
-            if (data.fatal) {
-                setStatus('播放错误: ' + data.type, 'error');
-                formatText.textContent = data.details;
-            }
-        });
-    } else {
-        video.src = url;
-        formatText.textContent = '原生尝试';
+        // 检查是否是M3U8
+        if (!url.toLowerCase().endsWith('.m3u8')) {
+            throw new Error('请输入有效的 .m3u8 链接');
+        }
+
+        // 尝试预加载M3U8验证可用性
+        await preCheckM3u8(url);
+
+        // Native HLS support (Safari / iOS)
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            formatText.textContent = '原生 HLS';
+            video.src = url;
+            await video.play().catch(() => {});
+        } 
+        // HLS.js fallback
+        else if (window.Hls && Hls.isSupported()) {
+            hls = new Hls({
+                enableWorker: true,
+                lowLatencyMode: true,
+                maxBufferLength: 10,
+                maxMaxBufferLength: 30,
+                enableSoftwareAES: true,
+            });
+            
+            hls.loadSource(url);
+            hls.attachMedia(video);
+
+            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                hlsLoaded = true;
+                setStatus('就绪', 'success');
+                formatText.textContent = 'HLS.js';
+                video.play().catch(() => {});
+                
+                // 更新码率信息
+                if (hls.levels && hls.levels.length > 0) {
+                    const level = hls.levels[hls.currentLevel || 0];
+                    bitrateText.textContent = (level.bitrate / 1000).toFixed(0) + ' kbps';
+                }
+            });
+
+            hls.on(Hls.Events.LEVEL_SWITCHED, function(e, data) {
+                if (hls.levels && data.level !== undefined) {
+                    const level = hls.levels[data.level];
+                    bitrateText.textContent = (level.bitrate / 1000).toFixed(0) + ' kbps';
+                }
+            });
+
+            hls.on(Hls.Events.ERROR, function(e, data) {
+                console.error('[HLS Error]', data);
+                if (data.fatal) {
+                    const errorMsg = getHlsErrorMsg(data);
+                    setStatus('播放错误: ' + data.type, 'error');
+                    formatText.textContent = data.details;
+                    showError(errorMsg);
+                    showLoading(false);
+                    
+                    // 尝试恢复
+                    if (hls && data.fatal !== Hls.ErrorTypes.NETWORK_ERROR) {
+                        hls.startLoad();
+                    }
+                } else {
+                    // 非致命错误，记录但继续播放
+                    console.warn('[HLS Warning]', data);
+                }
+            });
+        } 
+        // 原生video作为最后备选
+        else {
+            formatText.textContent = '原生尝试';
+            video.src = url;
+            await video.play().catch(() => {});
+        }
+    } catch (e) {
+        setStatus('加载失败', 'error');
+        formatText.textContent = e.message;
+        showError(e.message);
+        showLoading(false);
+        console.error('[Player] Load error:', e);
     }
 }
 
-video.addEventListener('loadedmetadata', () => {
+function getHlsErrorMsg(data) {
+    const errors = {
+        'manifestLoadError': '无法加载播放列表',
+        'manifestParseError': '播放列表格式错误',
+        'levelLoadError': '无法加载视频层级',
+        'levelParseError': '视频层级解析错误',
+        'fragmentLoadError': '片段加载失败',
+        'fragmentParseError': '片段解析错误',
+        'bufferAppendError': '缓冲区写入错误',
+        'bufferStalledError': '缓冲区停滞',
+        'audioTrackLoadError': '音轨加载失败',
+        'subtitleTrackLoadError': '字幕加载失败',
+    };
+    return errors[data.details] || (data.reason || '未知错误');
+}
+
+async function preCheckM3u8(url) {
+    const response = await fetch(url, { method: 'HEAD', timeout: 10000 });
+    if (!response.ok) {
+        throw new Error(`服务器返回错误: ${response.status}`);
+    }
+    const contentType = response.headers.get('content-type');
+    if (contentType && !contentType.includes('mpegurl') && !contentType.includes('m3u8') && !contentType.includes('text/plain')) {
+        console.warn('Content-Type 不是 M3U8:', contentType);
+    }
+}
+
+function isValidUrl(string) {
+    try {
+        new URL(string);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+video.addEventListener('loadedmetadata', function() {
     resText.textContent = video.videoWidth + ' × ' + video.videoHeight;
     if (isFinite(video.duration)) {
         const m = Math.floor(video.duration / 60);
@@ -250,21 +430,72 @@ video.addEventListener('loadedmetadata', () => {
     }
 });
 
-video.addEventListener('playing', () => setStatus('▶️ 播放中', 'success'));
-video.addEventListener('pause', () => setStatus('⏸️ 已暂停', ''));
-video.addEventListener('error', () => setStatus('❌ 视频加载失败', 'error'));
+video.addEventListener('playing', function() {
+    showLoading(false);
+    setStatus('▶️ 播放中', 'success');
+});
+
+video.addEventListener('pause', function() {
+    if (!video.ended) {
+        setStatus('⏸️ 已暂停', '');
+    }
+});
+
+video.addEventListener('ended', function() {
+    setStatus('🎬 播放结束', '');
+});
+
+video.addEventListener('error', function(e) {
+    const err = video.error;
+    let msg = '视频加载失败';
+    if (err) {
+        const errCodes = {
+            1: '用户中止',
+            2: '网络错误',
+            3: '解码错误',
+            4: '不支持的格式',
+        };
+        msg = errCodes[err.code] || err.message || msg;
+    }
+    setStatus('❌ ' + msg, 'error');
+    showError('Video Error: ' + msg);
+    showLoading(false);
+});
+
+video.addEventListener('stalled', function() {
+    setStatus('⏳ 缓冲中...', '');
+});
+
+video.addEventListener('waiting', function() {
+    setStatus('⏳ 等待数据...', '');
+});
 
 function goBack() {
-    if (document.referrer) history.back();
-    else window.location.href = 'index.html';
+    if (document.referrer) {
+        history.back();
+    } else {
+        window.location.href = 'index.html';
+    }
 }
 
-// Auto load from URL parameter
 const params = new URLSearchParams(location.search);
 const autoSrc = params.get('src') || params.get('url');
-if (autoSrc) loadVideo(autoSrc);
+if (autoSrc) {
+    setTimeout(() => loadVideo(autoSrc), 500);
+}
 
-urlInput.addEventListener('keypress', e => { if (e.key === 'Enter') loadVideo(); });
+urlInput.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') loadVideo();
+});
+
+// HLS.js 加载失败时的降级处理
+function checkHlsLoaded() {
+    if (!window.Hls && !video.canPlayType('application/vnd.apple.mpegurl')) {
+        console.warn('HLS.js 未加载且浏览器不支持原生HLS');
+        formatText.textContent = '警告: HLS.js 加载失败';
+    }
+}
+setTimeout(checkHlsLoaded, 3000);
 
 // ========== 去广告规则加载 ==========
 const RULES_API = '../noad_proxy.php?mode=rules';
@@ -273,12 +504,15 @@ let cachedRules = null;
 function loadAdRulesPlayer() {
     if (cachedRules) return;
     fetch(RULES_API)
-        .then(r => r.json())
-        .then(data => {
+        .then(function(r) {
+            if (!r.ok) throw new Error('Network response was not ok');
+            return r.json();
+        })
+        .then(function(data) {
             cachedRules = data;
             renderRulesPlayer(data);
         })
-        .catch(() => {
+        .catch(function() {
             document.getElementById('rulesBtn').textContent = '📋 去广告规则（加载失败）';
         });
 }
@@ -297,10 +531,14 @@ function renderRulesPlayer(rules) {
     panel.innerHTML = `
         <div class="rules-meta">🚫 广告关键词命中即过滤 · ✅ 白名单词无论是否命中都会被保留</div>
         <h4>🚫 广告识别关键词（共 ${adKeywords.length} 个）</h4>
-        <div class="rule-tags">${adKeywords.map(k => `<span class="rule-tag">${k}</span>`).join('')}</div>
+        <div class="rule-tags">${adKeywords.map(k => '<span class="rule-tag">' + escapeHtml(k) + '</span>').join('')}</div>
         <h4>✅ 白名单关键词（共 ${whiteKeywords.length} 个）</h4>
-        <div class="rule-tags">${whiteKeywords.map(k => `<span class="rule-tag safe">${k}</span>`).join('')}</div>
+        <div class="rule-tags">${whiteKeywords.map(k => '<span class="rule-tag safe">' + escapeHtml(k) + '</span>').join('')}</div>
     `;
+}
+
+function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function toggleRules() {
@@ -308,10 +546,11 @@ function toggleRules() {
     const btn = document.getElementById('rulesBtn');
     if (!panel) return;
     const isOpen = panel.classList.toggle('open');
-    if (btn) btn.textContent = (btn.textContent || '').replace('▼', '▲').replace('▲', '▼').trim() + (isOpen ? ' ▲' : ' ▼');
+    if (btn) {
+        btn.textContent = (btn.textContent || '').replace('▼', '▲').replace('▲', '▼').trim() + (isOpen ? ' ▲' : ' ▼');
+    }
 }
 
-// 页面加载时自动获取规则
 loadAdRulesPlayer();
 </script>
 </body>

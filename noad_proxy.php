@@ -34,7 +34,55 @@ switch ($mode) {
 
     case 'ts':
         if ($src === '') { http_response_code(400); echo 'missing src'; exit; }
-        $parser->serveTs($src);
+        // TS 片段代理：解决跨域和防盗链问题
+        $tsUrl = urldecode($src);
+        $ch = curl_init($tsUrl);
+        curl_setopt_array($ch, array(
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_HEADER         => true,
+            CURLOPT_USERAGENT      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            CURLOPT_REFERER        => parse_url($tsUrl, PHP_URL_SCHEME) . '://' . parse_url($tsUrl, PHP_URL_HOST),
+            CURLOPT_HTTPHEADER     => array(
+                'Accept: video/mp2t,video/*,*/*;q=0.8',
+                'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+            ),
+        ));
+        $response = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        $err = curl_error($ch);
+        curl_close($ch);
+        
+        if ($response === false || $code !== 200) {
+            http_response_code(502);
+            header('Access-Control-Allow-Origin: *');
+            echo 'TS proxy failed: ' . ($err ?: 'HTTP ' . $code);
+            exit;
+        }
+        
+        $headers = substr($response, 0, $headerSize);
+        $body = substr($response, $headerSize);
+        
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+        header('Access-Control-Allow-Headers: *');
+        header('Cache-Control: public, max-age=86400');
+        
+        if (preg_match('/Content-Type:\s*([^\r\n]+)/i', $headers, $m)) {
+            header('Content-Type: ' . trim($m[1]));
+        } else {
+            header('Content-Type: video/mp2t');
+        }
+        
+        if (preg_match('/Content-Length:\s*(\d+)/i', $headers, $m)) {
+            header('Content-Length: ' . $m[1]);
+        }
+        
+        echo $body;
         exit;
 
     case 'rules':
