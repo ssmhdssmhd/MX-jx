@@ -1448,30 +1448,207 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     // ===== 2. M3U8 解析 =====
     ?>
     <div class="tab-panel <?php echo $page==='m3u8_parse'?'active':''; ?>" id="tab-m3u8_parse">
-        <h2>📼 M3U8 解析（去广告分析）</h2>
-        <div class="panel">
-            <h3>🎯 输入 M3U8 链接</h3>
-            <div class="row-flex">
-                <input type="text" id="m3u8Url" placeholder="例如：https://example.com/video/playlist.m3u8" style="flex:1;min-width:300px">
-                <select id="siteId"><option value="0">关联站点（可选）</option></select>
-                <button type="button" class="btn-primary-sm" onclick="parseM3u8()" style="font-size:14px;padding:8px 18px">🔍 解析</button>
-                <span id="parseStatus" style="color:#888;font-size:13px">等待解析...</span>
+        <h2>📼 M3U8 解析与去广告分析</h2>
+
+        <!-- 分析模式切换 -->
+        <div class="panel" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 24px; color: white;">
+            <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">🎯 快速分析</h3>
+
+            <div class="row-flex" style="gap: 12px; flex-wrap: wrap;">
+                <input type="text" id="m3u8Url" placeholder="输入 M3U8 链接或直接粘贴 M3U8 内容..." style="flex: 1; min-width: 320px; padding: 14px 18px; border: none; border-radius: 12px; font-size: 15px; background: rgba(255,255,255,0.95);">
+
+                <select id="siteId" style="padding: 14px 18px; border: none; border-radius: 12px; font-size: 14px; background: rgba(255,255,255,0.95);">
+                    <option value="0">关联站点（可选）</option>
+                </select>
+
+                <select id="analysisMode" style="padding: 14px 18px; border: none; border-radius: 12px; font-size: 14px; background: rgba(255,255,255,0.95);">
+                    <option value="quick">⚡ 快速分析</option>
+                    <option value="deep">🔍 深度分析</option>
+                    <option value="md5">🎯 MD5指纹分析</option>
+                </select>
             </div>
-            <div id="parseStats" style="margin-top:15px;display:none">
-                <div class="grid-flow">
-                    <div class="stat-card"><div class="label">总片段</div><div class="num" id="sTotal">0</div></div>
-                    <div class="stat-card v2"><div class="label">广告片段</div><div class="num" id="sAd">0</div></div>
-                    <div class="stat-card v3"><div class="label">保留片段</div><div class="num" id="sKeep">0</div></div>
-                    <div class="stat-card v4"><div class="label">总时长</div><div class="num" id="sDuration">0</div></div>
-                </div>
-                <div style="margin-top:10px">
-                    <button type="button" class="btn-secondary-sm" onclick="document.getElementById('rawContent').style.display=(document.getElementById('rawContent').style.display==='none'?'block':'none')">👁️ 原始内容</button>
-                    <button type="button" class="btn-secondary-sm" onclick="copyCleanContent()">📋 复制清洗后的内容</button>
-                </div>
+
+            <div style="margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap;">
+                <button type="button" class="btn-primary-sm" onclick="parseM3u8()" style="padding: 14px 28px; font-size: 15px; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); color: white; font-weight: 600;">
+                    🔍 开始解析
+                </button>
+
+                <button type="button" class="btn-primary-sm" onclick="loadSampleM3u8()" style="padding: 14px 28px; font-size: 15px; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); color: white; font-weight: 600;">
+                    📥 加载示例
+                </button>
             </div>
-            <pre id="rawContent" style="margin-top:12px;padding:14px;background:#2b2b3c;color:#d0d0e0;border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto;display:none"></pre>
-            <div id="segmentList" style="margin-top:15px"></div>
+
+            <div id="parseStatus" style="margin-top: 16px; font-size: 14px; opacity: 0.9;">
+                💡 提示：可以直接粘贴 M3U8 内容或输入 URL 地址
+            </div>
         </div>
+
+        <!-- 分析结果统计 -->
+        <div id="parseStats" style="margin-top: 24px; display: none;">
+            <div class="grid-flow">
+                <div class="stat-card" style="position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: -30px; right: -30px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                    <div class="label">📊 总片段数</div>
+                    <div class="num" id="sTotal" style="font-size: 42px;">0</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">视频片段总数</div>
+                </div>
+
+                <div class="stat-card v6" style="position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: -30px; right: -30px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                    <div class="label">🚫 广告片段</div>
+                    <div class="num" id="sAd" style="font-size: 42px;">0</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">将被移除</div>
+                </div>
+
+                <div class="stat-card v4" style="position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: -30px; right: -30px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                    <div class="label">✅ 保留片段</div>
+                    <div class="num" id="sKeep" style="font-size: 42px;">0</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">正片内容</div>
+                </div>
+
+                <div class="stat-card v3" style="position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: -30px; right: -30px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                    <div class="label">⏱️ 总时长</div>
+                    <div class="num" id="sDuration" style="font-size: 36px;">0</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">视频总时长</div>
+                </div>
+
+                <div class="stat-card v5" style="position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: -30px; right: -30px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                    <div class="label">📈 广告占比</div>
+                    <div class="num" id="sAdRate" style="font-size: 42px;">0%</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">广告比例</div>
+                </div>
+
+                <div class="stat-card v2" style="position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: -30px; right: -30px; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%;"></div>
+                    <div class="label">🧹 广告时长</div>
+                    <div class="num" id="sAdDuration" style="font-size: 36px;">0</div>
+                    <div style="font-size: 12px; opacity: 0.8; margin-top: 8px;">将被过滤</div>
+                </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="panel" style="margin-top: 20px;">
+                <h3>📋 操作选项</h3>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px;">
+                    <button type="button" class="btn-success-sm" onclick="copyCleanContent()" style="padding: 12px 20px; font-size: 14px;">
+                        📋 复制清洗后内容
+                    </button>
+                    <button type="button" class="btn-primary-sm" onclick="downloadCleanM3u8()" style="padding: 12px 20px; font-size: 14px;">
+                        ⬇ 下载清洗后文件
+                    </button>
+                    <button type="button" class="btn-secondary-sm" onclick="toggleRawContent()" style="padding: 12px 20px; font-size: 14px;">
+                        👁️ 查看原始内容
+                    </button>
+                    <button type="button" class="btn-warning-sm" onclick="showAdDetails()" style="padding: 12px 20px; font-size: 14px;">
+                        🔍 查看广告详情
+                    </button>
+                    <button type="button" class="btn-danger-sm" onclick="addToBlacklist()" style="padding: 12px 20px; font-size: 14px;">
+                        🚫 加入黑名单
+                    </button>
+                </div>
+            </div>
+
+            <!-- 原始内容 -->
+            <div id="rawContentPanel" style="margin-top: 20px; display: none;">
+                <div class="panel">
+                    <h3>📄 原始 M3U8 内容</h3>
+                    <pre id="rawContent" style="margin-top: 12px; padding: 16px; background: #1e1e2e; color: #cdd6f4; border-radius: 10px; font-size: 12px; line-height: 1.8; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;"></pre>
+                </div>
+            </div>
+
+            <!-- 清洗后内容 -->
+            <div id="cleanContentPanel" style="margin-top: 20px;">
+                <div class="panel">
+                    <h3>✨ 清洗后的 M3U8 内容</h3>
+                    <pre id="cleanContent" style="margin-top: 12px; padding: 16px; background: #1e1e2e; color: #a6e3a1; border-radius: 10px; font-size: 12px; line-height: 1.8; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;"></pre>
+                </div>
+            </div>
+
+            <!-- 片段列表 -->
+            <div id="segmentListPanel" style="margin-top: 20px;">
+                <div class="panel">
+                    <h3>📋 片段列表详情</h3>
+                    <div id="segmentFilters" style="margin-bottom: 16px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn-primary-sm active" onclick="filterSegments('all')" style="padding: 8px 16px;">全部</button>
+                        <button class="btn-danger-sm" onclick="filterSegments('ad')" style="padding: 8px 16px;">仅广告</button>
+                        <button class="btn-success-sm" onclick="filterSegments('keep')" style="padding: 8px 16px;">仅保留</button>
+                    </div>
+                    <div id="segmentList" style="max-height: 600px; overflow-y: auto;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 加载状态 -->
+        <div id="parseLoading" style="display: none; margin-top: 24px;">
+            <div class="panel" style="text-align: center; padding: 60px 20px;">
+                <div style="font-size: 48px; margin-bottom: 20px; animation: pulse 1.5s infinite;">🔄</div>
+                <div style="font-size: 18px; color: #667eea; font-weight: 600;">正在解析中...</div>
+                <div style="font-size: 14px; color: #888; margin-top: 12px;">正在分析 M3U8 内容，请稍候</div>
+                <div style="margin-top: 20px;">
+                    <div style="width: 200px; height: 6px; background: #e0e0e0; border-radius: 3px; margin: 0 auto; overflow: hidden;">
+                        <div id="parseProgress" style="width: 0%; height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width 0.3s;"></div>
+                    </div>
+                    <div id="parseProgressText" style="font-size: 13px; color: #888; margin-top: 8px;">0%</div>
+                </div>
+            </div>
+        </div>
+
+        <style>
+            @keyframes pulse {
+                0%, 100% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.1); opacity: 0.8; }
+            }
+            .segment-item {
+                padding: 12px 16px;
+                margin-bottom: 8px;
+                border-radius: 10px;
+                background: white;
+                border-left: 4px solid #e0e0e0;
+                transition: all 0.3s;
+            }
+            .segment-item:hover {
+                transform: translateX(4px);
+                box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            }
+            .segment-item.ad {
+                background: linear-gradient(90deg, #fee2e2, #fef2f2);
+                border-left-color: #ef4444;
+            }
+            .segment-item.keep {
+                background: linear-gradient(90deg, #dcfce7, #f0fdf4);
+                border-left-color: #22c55e;
+            }
+            .segment-index {
+                font-weight: 700;
+                color: #667eea;
+                min-width: 60px;
+                display: inline-block;
+            }
+            .segment-duration {
+                color: #64748b;
+                margin-left: 12px;
+                font-weight: 500;
+            }
+            .segment-uri {
+                font-size: 12px;
+                color: #64748b;
+                margin-top: 6px;
+                font-family: 'Fira Code', monospace;
+                word-break: break-all;
+            }
+            .segment-reason {
+                font-size: 12px;
+                color: #dc2626;
+                margin-top: 6px;
+                font-weight: 600;
+            }
+            #segmentFilters .active {
+                box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+            }
+        </style>
     </div>
 
     <?php
@@ -2403,49 +2580,149 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     // ===== 16. 工具管理 =====
     ?>
     <div class="tab-panel <?php echo $page==='tools'?'active':''; ?>" id="tab-tools">
-        <h2>🧰 工具管理</h2>
-        
-        <div class="panel" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:20px;">
-            <h3 style="color:#fff;margin-bottom:15px">⚡ 综合分析</h3>
-            <div style="display:flex;gap:12px;flex-wrap:wrap;">
-                <input type="text" id="comboInput" placeholder="粘贴 M3U8 链接或内容..." style="flex:1;min-width:300px;padding:10px;border:none;border-radius:8px;font-size:14px;">
-                <select id="comboMode" style="padding:10px;border:none;border-radius:8px;font-size:14px;">
-                    <option value="auto">自动识别</option>
-                    <option value="m3u8">M3U8格式</option>
-                    <option value="url">URL格式</option>
+        <h2>🧰 工具管理中心</h2>
+
+        <!-- 综合分析区域 -->
+        <div class="panel" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 28px; color: white; border-radius: 16px;">
+            <h3 style="color: white; margin: 0 0 20px 0; font-size: 20px;">⚡ 智能综合分析</h3>
+            <p style="margin: 0 0 20px 0; opacity: 0.9; font-size: 14px;">输入 M3U8 链接或内容，自动进行特征提取和广告清洗</p>
+
+            <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;">
+                <input type="text" id="comboInput" placeholder="输入 M3U8 链接或直接粘贴 M3U8 内容..." style="flex: 1; min-width: 350px; padding: 16px 20px; border: none; border-radius: 12px; font-size: 15px; background: rgba(255,255,255,0.98);">
+
+                <select id="comboMode" style="padding: 16px 20px; border: none; border-radius: 12px; font-size: 14px; background: rgba(255,255,255,0.98);">
+                    <option value="auto">🎯 自动识别</option>
+                    <option value="m3u8">📼 M3U8格式</option>
+                    <option value="url">🔗 URL格式</option>
                 </select>
-                <button onclick="comboAnalyze()" class="btn-primary-sm" style="padding:10px 24px;font-size:14px;">开始分析</button>
+
+                <select id="comboAlgorithm" style="padding: 16px 20px; border: none; border-radius: 12px; font-size: 14px; background: rgba(255,255,255,0.98);">
+                    <option value="all">🧩 全算法</option>
+                    <option value="domain">🌐 域名过滤</option>
+                    <option value="keyword">🔑 关键词过滤</option>
+                    <option value="md5">🎯 MD5过滤</option>
+                </select>
             </div>
-            <div id="comboResult" style="margin-top:15px;padding:15px;background:rgba(255,255,255,0.15);border-radius:8px;display:none;">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-                    <div>
-                        <h4 style="margin:0 0 10px 0">🔑 特征码摘要</h4>
-                        <div id="featureSummary" style="font-size:13px;line-height:1.6;"></div>
+
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <button onclick="comboAnalyze()" style="padding: 16px 32px; font-size: 16px; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); color: white; border-radius: 12px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: all 0.3s;">
+                    <span style="font-size: 20px;">🚀</span> 开始综合分析
+                </button>
+
+                <button onclick="loadSampleForCombo()" style="padding: 16px 32px; font-size: 16px; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); color: white; border-radius: 12px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: all 0.3s;">
+                    <span style="font-size: 20px;">📥</span> 加载示例
+                </button>
+            </div>
+        </div>
+
+        <!-- 分析结果区域 -->
+        <div id="comboResult" style="margin-top: 24px; display: none;">
+            <div class="panel" style="border-left: 5px solid #667eea;">
+                <h3 style="margin-bottom: 20px;">📊 分析结果摘要</h3>
+
+                <!-- 结果统计卡片 -->
+                <div class="grid-flow" style="margin-bottom: 24px;">
+                    <div class="info-box">
+                        <div class="label">总片段数</div>
+                        <div class="value" id="comboTotalSegs">0</div>
                     </div>
-                    <div>
-                        <h4 style="margin:0 0 10px 0">🧹 去广告摘要</h4>
-                        <div id="adSummary" style="font-size:13px;line-height:1.6;"></div>
+                    <div class="info-box red">
+                        <div class="label">广告片段</div>
+                        <div class="value" id="comboAdSegs">0</div>
+                    </div>
+                    <div class="info-box green">
+                        <div class="label">保留片段</div>
+                        <div class="value" id="comboKeepSegs">0</div>
+                    </div>
+                    <div class="info-box orange">
+                        <div class="label">广告占比</div>
+                        <div class="value" id="comboAdRate">0%</div>
                     </div>
                 </div>
-                <div style="margin-top:15px;">
-                    <h4 style="margin:0 0 10px 0">📝 完整结果 JSON</h4>
-                    <pre id="comboJson" style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:6px;font-size:12px;max-height:300px;overflow-y:auto;"></pre>
+
+                <!-- 特征和去广告对比 -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+                    <div style="background: linear-gradient(135deg, #667eea20, #764ba220); padding: 20px; border-radius: 12px;">
+                        <h4 style="margin: 0 0 16px 0; color: #667eea; font-size: 16px;">🔑 特征码提取结果</h4>
+                        <div id="featureSummary" style="font-size: 14px; line-height: 1.8;"></div>
+                    </div>
+                    <div style="background: linear-gradient(135deg, #11998e20, #38ef7d20); padding: 20px; border-radius: 12px;">
+                        <h4 style="margin: 0 0 16px 0; color: #11998e; font-size: 16px;">🧹 去广告结果</h4>
+                        <div id="adSummary" style="font-size: 14px; line-height: 1.8;"></div>
+                    </div>
                 </div>
-            </div>
-            <div id="comboLoading" style="margin-top:15px;padding:15px;background:rgba(255,255,255,0.15);border-radius:8px;display:none;">
-                <div style="text-align:center;">
-                    <div style="font-size:32px;margin-bottom:8px;">🔄</div>
-                    <div>分析中，请稍候...</div>
+
+                <!-- 操作按钮 -->
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px;">
+                    <button onclick="copyComboCleanContent()" class="btn-success-sm" style="padding: 12px 20px; font-size: 14px;">
+                        📋 复制清洗内容
+                    </button>
+                    <button onclick="downloadComboClean()" class="btn-primary-sm" style="padding: 12px 20px; font-size: 14px;">
+                        ⬇ 下载清洗后文件
+                    </button>
+                    <button onclick="saveAnalysisReport()" class="btn-secondary-sm" style="padding: 12px 20px; font-size: 14px;">
+                        💾 保存分析报告
+                    </button>
+                    <button onclick="exportAdPatterns()" class="btn-warning-sm" style="padding: 12px 20px; font-size: 14px;">
+                        📤 导出广告特征
+                    </button>
+                </div>
+
+                <!-- 完整JSON结果 -->
+                <div style="margin-top: 20px;">
+                    <h4 style="margin: 0 0 12px 0;">📝 完整分析结果 JSON</h4>
+                    <pre id="comboJson" style="background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 10px; font-size: 12px; max-height: 400px; overflow-y: auto; line-height: 1.8;"></pre>
                 </div>
             </div>
         </div>
 
-        <div class="panel">
-            <h3>🔧 工具列表</h3>
-            <div id="toolsList" style="min-height:200px;padding:10px;background:#f8f9fa;border-radius:8px;">
-                <div style="text-align:center;color:#888;padding:40px;">
-                    <div style="font-size:48px;margin-bottom:12px;">🔧</div>
-                    <div>加载工具列表中...</div>
+        <!-- 加载状态 -->
+        <div id="comboLoading" style="margin-top: 24px; display: none;">
+            <div class="panel" style="text-align: center; padding: 80px 20px;">
+                <div style="position: relative; width: 120px; height: 120px; margin: 0 auto 30px;">
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 48px; animation: bounce 1s infinite;">🔄</div>
+                    <svg style="width: 120px; height: 120px; animation: spin 2s linear infinite;">
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#e2e8f0" stroke-width="8"/>
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="url(#gradient)" stroke-width="8" stroke-dasharray="314" stroke-dashoffset="78.5" stroke-linecap="round"/>
+                        <defs>
+                            <linearGradient id="gradient">
+                                <stop offset="0%" stop-color="#667eea"/>
+                                <stop offset="100%" stop-color="#764ba2"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <div style="font-size: 20px; color: #667eea; font-weight: 600; margin-bottom: 12px;">正在深度分析中...</div>
+                <div style="font-size: 14px; color: #64748b; margin-bottom: 20px;">正在进行特征提取和广告识别</div>
+                <div style="width: 300px; height: 8px; background: #e2e8f0; border-radius: 4px; margin: 0 auto; overflow: hidden;">
+                    <div id="comboProgress" style="width: 0%; height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width 0.3s; border-radius: 4px;"></div>
+                </div>
+                <div id="comboProgressText" style="font-size: 13px; color: #64748b; margin-top: 12px;">0%</div>
+            </div>
+        </div>
+
+        <style>
+            @keyframes bounce {
+                0%, 100% { transform: translate(-50%, -50%) scale(1); }
+                50% { transform: translate(-50%, -50%) scale(1.1); }
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            #comboResult .info-box:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+            }
+        </style>
+
+        <!-- 工具列表 -->
+        <div class="panel" style="margin-top: 24px;">
+            <h3>🔧 可用工具列表</h3>
+            <div id="toolsList" style="min-height: 200px; padding: 16px; background: #f8fafc; border-radius: 12px;">
+                <div style="text-align: center; color: #888; padding: 60px;">
+                    <div style="font-size: 56px; margin-bottom: 16px;">🔧</div>
+                    <div>正在加载工具列表...</div>
                 </div>
             </div>
         </div>
@@ -2499,60 +2776,257 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 
     function comboAnalyze() {
         const input = document.getElementById('comboInput').value.trim();
+        const mode = document.getElementById('comboMode').value;
+        const algorithm = document.getElementById('comboAlgorithm').value;
+
         if (!input) {
-            alert('请输入内容');
+            showNotification('请输入M3U8链接或内容！');
             return;
         }
-        const mode = document.getElementById('comboMode').value;
-        
+
         document.getElementById('comboResult').style.display = 'none';
         document.getElementById('comboLoading').style.display = 'block';
-        
+
+        // 模拟进度条
+        var comboProgress = 0;
+        var comboProgressInterval = setInterval(function() {
+            comboProgress = Math.min(comboProgress + Math.random() * 20, 95);
+            var progressBar = document.getElementById('comboProgress');
+            var progressText = document.getElementById('comboProgressText');
+            if (progressBar) progressBar.style.width = comboProgress + '%';
+            if (progressText) progressText.textContent = Math.round(comboProgress) + '% - 正在进行深度分析...';
+        }, 400);
+
         fetch('?action=ajax_tools_combo', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'input=' + encodeURIComponent(input) + '&mode=' + encodeURIComponent(mode)
+            body: 'input=' + encodeURIComponent(input) + '&mode=' + encodeURIComponent(mode) + '&algorithm=' + encodeURIComponent(algorithm)
         }).then(r => {
             if (!r.ok) throw new Error('HTTP error ' + r.status);
             return r.text();
         }).then(text => {
-            try {
-                const data = JSON.parse(text);
-                if (data.code === 200) {
-                    document.getElementById('featureSummary').innerHTML = formatFeatureSummary(data.feature);
-                    document.getElementById('adSummary').innerHTML = formatAdSummary(data.ad_clean);
-                    document.getElementById('comboJson').textContent = JSON.stringify(data, null, 2);
-                    document.getElementById('comboResult').style.display = 'block';
-                } else {
-                    alert(data.msg || '分析失败');
+            clearInterval(comboProgressInterval);
+            var progressBar = document.getElementById('comboProgress');
+            var progressText = document.getElementById('comboProgressText');
+            if (progressBar) progressBar.style.width = '100%';
+            if (progressText) progressText.textContent = '100% - 分析完成！';
+
+            setTimeout(function() {
+                document.getElementById('comboLoading').style.display = 'none';
+
+                try {
+                    const data = JSON.parse(text);
+                    if (data.code === 200) {
+                        // 更新统计卡片
+                        var feature = data.feature && data.feature.data ? data.feature.data : {};
+                        var adClean = data.ad_clean && data.ad_clean.data ? data.ad_clean.data : {};
+
+                        document.getElementById('comboTotalSegs').textContent = adClean.total || 0;
+                        document.getElementById('comboAdSegs').textContent = adClean.removed || 0;
+                        document.getElementById('comboKeepSegs').textContent = adClean.kept || 0;
+
+                        var adRate = adClean.total > 0 ? ((adClean.removed / adClean.total) * 100).toFixed(1) : 0;
+                        document.getElementById('comboAdRate').textContent = adRate + '%';
+
+                        // 更新摘要
+                        document.getElementById('featureSummary').innerHTML = formatFeatureSummary(data.feature);
+                        document.getElementById('adSummary').innerHTML = formatAdSummary(data.ad_clean);
+                        document.getElementById('comboJson').textContent = JSON.stringify(data, null, 2);
+
+                        document.getElementById('comboResult').style.display = 'block';
+                        showNotification('✅ 综合分析完成！');
+                    } else {
+                        showNotification('❌ 分析失败：' + (data.msg || '未知错误'));
+                    }
+                } catch (e) {
+                    showNotification('❌ 解析结果失败: ' + e.message);
                 }
-            } catch (e) {
-                alert('解析结果失败: ' + e.message);
-            }
+            }, 500);
         }).catch(e => {
-            alert('请求失败: ' + e.message);
-        }).finally(() => {
+            clearInterval(comboProgressInterval);
             document.getElementById('comboLoading').style.display = 'none';
+            showNotification('❌ 请求失败: ' + e.message);
         });
     }
 
+    function loadSampleForCombo() {
+        var sampleM3u8 = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:1
+#EXTINF:5.0,
+https://cdn.example.com/video/part1.ts
+#EXTINF:5.0,
+https://adserver.example.com/preroll_ad1.ts
+#EXTINF:5.0,
+https://ad.doubleclick.net/sponsor.ts
+#EXTINF:5.0,
+https://cdn.example.com/video/part2.ts
+#EXTINF:5.0,
+https://ads.youtube.com/midroll_ad.ts
+#EXTINF:5.0,
+https://cdn.example.com/video/part3.ts
+#EXTINF:5.0,
+https://ad.example.com/promo_ad.ts
+#EXTINF:5.0,
+https://cdn.example.com/video/part4.ts
+#EXT-X-ENDLIST`;
+
+        document.getElementById('comboInput').value = sampleM3u8;
+        showNotification('✅ 已加载示例M3U8！');
+    }
+
+    function copyComboCleanContent() {
+        var data = document.getElementById('comboJson').textContent;
+        try {
+            var json = JSON.parse(data);
+            var cleaned = json.ad_clean && json.ad_clean.data && json.ad_clean.data.cleaned_content;
+            if (cleaned) {
+                navigator.clipboard.writeText(cleaned).then(function() {
+                    showNotification('✅ 清洗内容已复制！');
+                });
+            } else {
+                showNotification('暂无清洗内容');
+            }
+        } catch (e) {
+            showNotification('复制失败');
+        }
+    }
+
+    function downloadComboClean() {
+        var data = document.getElementById('comboJson').textContent;
+        try {
+            var json = JSON.parse(data);
+            var cleaned = json.ad_clean && json.ad_clean.data && json.ad_clean.data.cleaned_content;
+            if (cleaned) {
+                var blob = new Blob([cleaned], { type: 'text/plain' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'combo_cleaned_' + Date.now() + '.m3u8';
+                a.click();
+                URL.revokeObjectURL(url);
+                showNotification('✅ 文件下载已开始！');
+            } else {
+                showNotification('暂无清洗内容');
+            }
+        } catch (e) {
+            showNotification('下载失败');
+        }
+    }
+
+    function saveAnalysisReport() {
+        var data = document.getElementById('comboJson').textContent;
+        try {
+            var json = JSON.parse(data);
+            var report = {
+                timestamp: new Date().toISOString(),
+                analysis: json
+            };
+            var blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'analysis_report_' + Date.now() + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            showNotification('✅ 分析报告已保存！');
+        } catch (e) {
+            showNotification('保存失败');
+        }
+    }
+
+    function exportAdPatterns() {
+        var data = document.getElementById('comboJson').textContent;
+        try {
+            var json = JSON.parse(data);
+            var patterns = {
+                domains: [],
+                keywords: [],
+                timestamp: new Date().toISOString()
+            };
+
+            var feature = json.feature && json.feature.data ? json.feature.data : {};
+            if (feature.domain_counts) {
+                patterns.domains = Object.keys(feature.domain_counts);
+            }
+
+            var blob = new Blob([JSON.stringify(patterns, null, 2)], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'ad_patterns_' + Date.now() + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            showNotification('✅ 广告特征已导出！');
+        } catch (e) {
+            showNotification('导出失败');
+        }
+    }
+
     function formatFeatureSummary(feature) {
-        if (!feature || !feature.success) return '<div style="color:#f87171;">❌ 特征提取失败</div>';
+        if (!feature || !feature.success) return '<div style="color:#ef4444; padding: 12px; background: #fee2e2; border-radius: 8px;">❌ 特征提取失败</div>';
         const data = feature.data || {};
-        let html = '';
-        if (data.md5_signatures) html += '<div>MD5指纹数: <strong>' + data.md5_signatures.length + '</strong></div>';
-        if (data.domain_counts) html += '<div>域名数: <strong>' + Object.keys(data.domain_counts).length + '</strong></div>';
-        if (data.global_signature) html += '<div>SHA1签名: <code style="font-size:11px;">' + data.global_signature + '</code></div>';
+        let html = '<div style="display: grid; gap: 12px;">';
+        if (data.md5_signatures && data.md5_signatures.length) {
+            html += '<div style="background: #f0fdf4; padding: 12px; border-radius: 8px;">';
+            html += '<div style="font-weight: 600; color: #166534; margin-bottom: 8px;">🎯 MD5指纹</div>';
+            html += '<div style="font-size: 13px;">数量: <strong>' + data.md5_signatures.length + '</strong></div>';
+            if (data.md5_signatures.length <= 3) {
+                data.md5_signatures.forEach(function(md5) {
+                    html += '<div style="font-size: 11px; font-family: monospace; margin-top: 4px; color: #666;">' + md5.substring(0, 32) + '...</div>';
+                });
+            }
+            html += '</div>';
+        }
+        if (data.domain_counts) {
+            var domains = Object.keys(data.domain_counts);
+            html += '<div style="background: #eff6ff; padding: 12px; border-radius: 8px;">';
+            html += '<div style="font-weight: 600; color: #1e40af; margin-bottom: 8px;">🌐 域名统计</div>';
+            html += '<div style="font-size: 13px;">唯一域名: <strong>' + domains.length + '</strong></div>';
+            if (domains.length > 0) {
+                html += '<div style="font-size: 12px; color: #666; margin-top: 8px;">示例: ' + domains.slice(0, 3).join(', ') + '</div>';
+            }
+            html += '</div>';
+        }
+        if (data.global_signature) {
+            html += '<div style="background: #f5f3ff; padding: 12px; border-radius: 8px;">';
+            html += '<div style="font-weight: 600; color: #6b21a8; margin-bottom: 8px;">🔐 全局签名</div>';
+            html += '<div style="font-size: 11px; font-family: monospace; word-break: break-all;">' + data.global_signature + '</div>';
+            html += '</div>';
+        }
+        html += '</div>';
         return html || '<div style="color:#666;">暂无数据</div>';
     }
 
     function formatAdSummary(adClean) {
-        if (!adClean || !adClean.success) return '<div style="color:#f87171;">❌ 去广告失败</div>';
+        if (!adClean || !adClean.success) return '<div style="color:#ef4444; padding: 12px; background: #fee2e2; border-radius: 8px;">❌ 去广告失败</div>';
         const data = adClean.data || {};
-        let html = '';
-        if (data.total !== undefined) html += '<div>总片段: <strong>' + data.total + '</strong></div>';
-        if (data.removed !== undefined) html += '<div>移除广告: <strong style="color:#ef4444;">' + data.removed + '</strong></div>';
-        if (data.kept !== undefined) html += '<div>保留正片: <strong style="color:#22c55e;">' + data.kept + '</strong></div>';
+        let html = '<div style="display: grid; gap: 12px;">';
+        if (data.total !== undefined) {
+            html += '<div style="background: #f0fdf4; padding: 12px; border-radius: 8px;">';
+            html += '<div style="font-weight: 600; color: #166534; margin-bottom: 8px;">📊 统计信息</div>';
+            html += '<div>总片段: <strong>' + data.total + '</strong></div>';
+            html += '<div>移除广告: <strong style="color:#dc2626;">' + (data.removed || 0) + '</strong></div>';
+            html += '<div>保留正片: <strong style="color:#16a34a;">' + (data.kept || 0) + '</strong></div>';
+            if (data.total > 0) {
+                var rate = ((data.removed || 0) / data.total * 100).toFixed(1);
+                html += '<div style="margin-top: 8px;">广告占比: <strong>' + rate + '%</strong></div>';
+            }
+            html += '</div>';
+        }
+        if (data.removed_reasons && data.removed_reasons.length) {
+            html += '<div style="background: #fef2f2; padding: 12px; border-radius: 8px;">';
+            html += '<div style="font-weight: 600; color: #991b1b; margin-bottom: 8px;">🚫 移除原因</div>';
+            data.removed_reasons.slice(0, 5).forEach(function(reason) {
+                html += '<div style="font-size: 12px; margin-top: 4px;">• ' + reason + '</div>';
+            });
+            if (data.removed_reasons.length > 5) {
+                html += '<div style="font-size: 12px; color: #666; margin-top: 4px;">...等 ' + data.removed_reasons.length + ' 种原因</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
         return html || '<div style="color:#666;">暂无数据</div>';
     }
 
@@ -2661,35 +3135,261 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 // ===== M3U8 解析 =====
 function parseM3u8() {
     var url = document.getElementById('m3u8Url').value.trim();
-    if (!url) { alert('请输入 M3U8 链接'); return; }
+    var analysisMode = document.getElementById('analysisMode').value;
+    if (!url) { alert('请输入 M3U8 链接或内容'); return; }
+
     var statusEl = document.getElementById('parseStatus');
+    var parseStats = document.getElementById('parseStats');
+    var parseLoading = document.getElementById('parseLoading');
+
+    // 显示加载状态
+    parseStats.style.display = 'none';
+    parseLoading.style.display = 'block';
+    statusEl.textContent = '正在解析中...';
+
+    // 模拟进度
+    var progress = 0;
+    var progressInterval = setInterval(function() {
+        progress = Math.min(progress + Math.random() * 15, 90);
+        document.getElementById('parseProgress').style.width = progress + '%';
+        document.getElementById('parseProgressText').textContent = Math.round(progress) + '%';
+    }, 300);
+
     var formData = new FormData();
     formData.append('action', 'ajax_parse_m3u8');
     formData.append('m3u8_url', url);
-    statusEl.textContent = '解析中...';
+    formData.append('analysis_mode', analysisMode);
+
     fetch('<?php echo htmlspecialchars($currentScript); ?>', { method: 'POST', body: formData })
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            if (data.code !== 200) { statusEl.textContent = '解析失败：' + (data.msg || '未知错误'); return; }
-            var segs = document.getElementById('segmentList');
-            var html = '<div class="panel"><h3>📊 解析结果（总 ' + data.total + ' 段，广告 ' + data.ad_count + ' 段，保留 ' + data.keep_count + ' 段）</h3>';
-            if (data.segments && data.segments.length) {
-                html += '<table class="data-table"><thead><tr><th>序号</th><th>时长</th><th>URI</th><th>类型</th></tr></thead><tbody>';
-                data.segments.forEach(function(seg) {
-                    html += '<tr' + (seg.is_ad ? ' style="background:#ffebee"' : '') + '>';
-                    html += '<td>' + seg.idx + '</td><td>' + seg.duration + 's</td>';
-                    html += '<td style="font-size:12px;word-break:break-all">' + seg.uri + '</td>';
-                    html += '<td>' + (seg.is_ad ? '<span class="badge badge-red">广告</span>' : '<span class="badge badge-green">保留</span>') + '</td>';
-                    html += '</tr>';
-                });
-                html += '</tbody></table>';
-            }
-            html += '</div>';
-            segs.innerHTML = html;
-            statusEl.textContent = '解析完成（站点：' + (data.site_name || '未知') + '）';
+            clearInterval(progressInterval);
+            document.getElementById('parseProgress').style.width = '100%';
+            document.getElementById('parseProgressText').textContent = '100%';
+
+            setTimeout(function() {
+                parseLoading.style.display = 'none';
+                parseStats.style.display = 'block';
+
+                if (data.code !== 200) {
+                    statusEl.textContent = '❌ 解析失败：' + (data.msg || '未知错误');
+                    statusEl.style.color = '#ef4444';
+                    return;
+                }
+
+                // 更新统计信息
+                document.getElementById('sTotal').textContent = data.total || 0;
+                document.getElementById('sAd').textContent = data.ad_count || 0;
+                document.getElementById('sKeep').textContent = data.keep_count || 0;
+
+                var totalDuration = data.total_duration || 0;
+                var adDuration = data.ad_duration || 0;
+                document.getElementById('sDuration').textContent = formatDuration(totalDuration);
+                document.getElementById('sAdDuration').textContent = formatDuration(adDuration);
+
+                var adRate = data.total > 0 ? ((data.ad_count / data.total) * 100).toFixed(1) : 0;
+                document.getElementById('sAdRate').textContent = adRate + '%';
+
+                // 显示原始内容
+                document.getElementById('rawContent').textContent = data.raw_content || '（无法获取原始内容）';
+
+                // 显示清洗后内容
+                document.getElementById('cleanContent').textContent = data.cleaned_content || '（无法获取清洗内容）';
+
+                // 显示片段列表
+                var segs = document.getElementById('segmentList');
+                var html = '';
+                if (data.segments && data.segments.length) {
+                    data.segments.forEach(function(seg, index) {
+                        var segClass = seg.is_ad ? 'ad' : 'keep';
+                        var reason = seg.is_ad ? '广告片段' : '正片';
+                        if (seg.ad_reason) {
+                            reason += ' - ' + seg.ad_reason;
+                        }
+
+                        html += '<div class="segment-item ' + segClass + '">';
+                        html += '<div>';
+                        html += '<span class="segment-index">#' + (index + 1) + '</span>';
+                        html += '<span class="segment-duration">' + seg.duration + 's</span>';
+                        html += '<span style="margin-left: 12px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: ' + (seg.is_ad ? '#fee2e2' : '#dcfce7') + '; color: ' + (seg.is_ad ? '#dc2626' : '#16a34a') + '; font-weight: 600;">' + reason + '</span>';
+                        html += '</div>';
+                        html += '<div class="segment-uri">' + seg.uri + '</div>';
+                        if (seg.is_ad && seg.ad_reason) {
+                            html += '<div class="segment-reason">原因：' + seg.ad_reason + '</div>';
+                        }
+                        html += '</div>';
+                    });
+                } else {
+                    html = '<div style="text-align: center; padding: 40px; color: #888;">暂无片段数据</div>';
+                }
+                segs.innerHTML = html;
+
+                statusEl.textContent = '✅ 解析完成 - 站点：' + (data.site_name || '未知') + ' | 模式：' + analysisMode;
+                statusEl.style.color = '#fff';
+            }, 500);
         })
-        .catch(function(e) { statusEl.textContent = '请求失败：' + e.message; });
+        .catch(function(e) {
+            clearInterval(progressInterval);
+            parseLoading.style.display = 'none';
+            parseStats.style.display = 'block';
+            statusEl.textContent = '❌ 请求失败：' + e.message;
+            statusEl.style.color = '#ef4444';
+        });
 }
+
+// 格式化时长
+function formatDuration(seconds) {
+    if (!seconds) return '0s';
+    if (seconds < 60) return seconds.toFixed(1) + 's';
+    var mins = Math.floor(seconds / 60);
+    var secs = Math.floor(seconds % 60);
+    return mins + 'm ' + secs + 's';
+}
+
+// 加载示例M3U8
+function loadSampleM3u8() {
+    var sampleM3u8 = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:1
+#EXTINF:5.0,
+https://example.com/video/segment1.ts
+#EXTINF:5.0,
+https://ad.example.com/ad1.ts
+#EXTINF:5.0,
+https://example.com/video/segment2.ts
+#EXTINF:5.0,
+https://ads.example.com/sponsor.ts
+#EXTINF:5.0,
+https://example.com/video/segment3.ts
+#EXTINF:5.0,
+https://ad.doubleclick.net/pre_roll.ts
+#EXTINF:5.0,
+https://example.com/video/segment4.ts
+#EXT-X-ENDLIST`;
+
+    document.getElementById('m3u8Url').value = sampleM3u8;
+    document.getElementById('parseStatus').textContent = '✅ 已加载示例M3U8，点击"开始解析"进行分析';
+    document.getElementById('parseStatus').style.color = '#10b981';
+}
+
+// 切换原始内容显示
+function toggleRawContent() {
+    var panel = document.getElementById('rawContentPanel');
+    if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+// 复制清洗后内容
+function copyCleanContent() {
+    var content = document.getElementById('cleanContent').textContent;
+    if (!content) {
+        alert('没有可复制的内容');
+        return;
+    }
+    navigator.clipboard.writeText(content).then(function() {
+        showNotification('✅ 已复制到剪贴板！');
+    }).catch(function() {
+        alert('复制失败，请手动复制');
+    });
+}
+
+// 下载清洗后文件
+function downloadCleanM3u8() {
+    var content = document.getElementById('cleanContent').textContent;
+    if (!content) {
+        alert('没有可下载的内容');
+        return;
+    }
+    var blob = new Blob([content], { type: 'text/plain' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'cleaned_' + Date.now() + '.m3u8';
+    a.click();
+    URL.revokeObjectURL(url);
+    showNotification('✅ 文件下载已开始！');
+}
+
+// 显示广告详情
+function showAdDetails() {
+    var segments = document.querySelectorAll('.segment-item.ad');
+    if (segments.length === 0) {
+        showNotification('没有检测到广告片段');
+        return;
+    }
+    var details = '检测到的广告片段：\n\n';
+    segments.forEach(function(seg, index) {
+        var idx = seg.querySelector('.segment-index');
+        var uri = seg.querySelector('.segment-uri');
+        var reason = seg.querySelector('.segment-reason');
+        details += '片段 #' + (index + 1) + '\n';
+        details += 'URL: ' + (uri ? uri.textContent : '未知') + '\n';
+        details += '原因: ' + (reason ? reason.textContent : '未知') + '\n\n';
+    });
+    alert(details);
+}
+
+// 加入黑名单
+function addToBlacklist() {
+    var segments = document.querySelectorAll('.segment-item.ad');
+    if (segments.length === 0) {
+        showNotification('没有检测到广告片段');
+        return;
+    }
+    var uris = [];
+    segments.forEach(function(seg) {
+        var uri = seg.querySelector('.segment-uri');
+        if (uri) {
+            uris.push(uri.textContent);
+        }
+    });
+    navigator.clipboard.writeText(uris.join('\n')).then(function() {
+        showNotification('✅ 已复制 ' + uris.length + ' 个广告URL到剪贴板，可添加到黑名单！');
+    });
+}
+
+// 片段过滤
+var currentFilter = 'all';
+function filterSegments(filter) {
+    currentFilter = filter;
+    var items = document.querySelectorAll('.segment-item');
+    items.forEach(function(item) {
+        if (filter === 'all') {
+            item.style.display = 'block';
+        } else if (filter === 'ad') {
+            item.style.display = item.classList.contains('ad') ? 'block' : 'none';
+        } else if (filter === 'keep') {
+            item.style.display = item.classList.contains('keep') ? 'block' : 'none';
+        }
+    });
+
+    // 更新按钮状态
+    document.querySelectorAll('#segmentFilters button').forEach(function(btn) {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+}
+
+// 显示通知
+function showNotification(message) {
+    var notification = document.createElement('div');
+    notification.style.cssText = 'position: fixed; top: 20px; right: 20px; padding: 16px 24px; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-radius: 12px; font-size: 14px; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: slideIn 0.3s ease;';
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    setTimeout(function() {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(function() { notification.remove(); }, 300);
+    }, 3000);
+}
+
+// 添加CSS动画
+var style = document.createElement('style');
+style.textContent = '@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } } @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }';
+document.head.appendChild(style);
 
 // ===== 接口添加/编辑辅助函数 =====
 function addApiRow() {
