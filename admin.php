@@ -1377,16 +1377,10 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 
     <div class="tabs-nav" id="tabsNav">
         <button data-tab="dashboard" class="<?php echo $page==='dashboard'?'active':''; ?>">📊 仪表盘</button>
-        <button data-tab="m3u8_parse" class="<?php echo $page==='m3u8_parse'?'active':''; ?>">📼 M3U8 解析</button>
-        <button data-tab="sites" class="<?php echo $page==='sites'?'active':''; ?>">🔗 资源站点</button>
-        <button data-tab="parse_log" class="<?php echo $page==='parse_log'?'active':''; ?>">📄 解析日志</button>
-        <button data-tab="cache_mgr" class="<?php echo $page==='cache_mgr'?'active':''; ?>">💽 缓存管理</button>
-        <button data-tab="ad_center" class="<?php echo $page==='ad_center'?'active':''; ?>">📌 智能去广告</button>
-        <button data-tab="api" class="<?php echo $page==='api'?'active':''; ?>">📡 API 线路</button>
-        <button data-tab="platform" class="<?php echo $page==='platform'?'active':''; ?>">🎯 平台规则</button>
-        <button data-tab="switch" class="<?php echo $page==='switch'?'active':''; ?>">🔀 系统开关</button>
-        <button data-tab="zjk" class="<?php echo $page==='zjk'?'active':''; ?>">📝 自定义接口</button>
-        <button data-tab="test" class="<?php echo $page==='test'?'active':''; ?>">🧪 接口测试</button>
+        <button data-tab="parse_center" class="<?php echo $page==='parse_center'?'active':''; ?>">📼 智能解析中心</button>
+        <button data-tab="ad_center" class="<?php echo $page==='ad_center'?'active':''; ?>">🚫 智能去广告</button>
+        <button data-tab="line_config" class="<?php echo $page==='line_config'?'active':''; ?>">📡 线路配置</button>
+        <button data-tab="interface_center" class="<?php echo $page==='interface_center'?'active':''; ?>">🔌 接口中心</button>
         <button data-tab="tools" class="<?php echo $page==='tools'?'active':''; ?>">🧰 工具管理</button>
         <button data-tab="system_mgmt" class="<?php echo $page==='system_mgmt'?'active':''; ?>">🛠️ 系统管理</button>
     </div>
@@ -1438,9 +1432,195 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     </div>
 
     <?php
-    // ===== 2. M3U8 解析 =====
+    // ===== 2. 智能解析中心（整合：M3U8 解析、资源站点、解析日志、缓存管理、解析源） =====
     ?>
-    <div class="tab-panel <?php echo $page==='m3u8_parse'?'active':''; ?>" id="tab-m3u8_parse">
+    <div class="tab-panel <?php echo $page==='parse_center'?'active':''; ?>" id="tab-parse_center">
+        <h2>📼 智能解析中心</h2>
+
+        <!-- 子标签导航 -->
+        <div class="tabs-nav" id="parseCenterSubNav" style="margin-bottom:20px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:8px">
+            <button data-subtab="pc_m3u8" class="active" style="color:white;background:rgba(255,255,255,0.15);border:none;padding:10px 18px;border-radius:10px;font-size:14px">📼 M3U8 解析</button>
+            <button data-subtab="pc_sites" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔗 资源站点</button>
+            <button data-subtab="pc_logs" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">📄 解析日志</button>
+            <button data-subtab="pc_cache" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">💽 缓存管理</button>
+            <button data-subtab="pc_sources" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔌 解析源</button>
+        </div>
+
+        <!-- 子标签 1：M3U8 解析 -->
+        <div class="sub-tab-panel active" id="subtab-pc_m3u8">
+            <div class="panel" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 24px; color: white;">
+                <h3 style="color: white; margin: 0 0 20px 0; font-size: 18px;">🎯 快速分析</h3>
+                <div class="row-flex" style="gap: 12px; flex-wrap: wrap;">
+                    <input type="text" id="m3u8Url_2" placeholder="输入 M3U8 链接或直接粘贴 M3U8 内容..." style="flex: 1; min-width: 320px; padding: 14px 18px; border: none; border-radius: 12px; font-size: 15px; background: rgba(255,255,255,0.95);">
+                    <select id="analysisMode_2" style="padding: 14px 18px; border: none; border-radius: 12px; font-size: 14px; background: rgba(255,255,255,0.95);">
+                        <option value="quick">⚡ 快速分析</option>
+                        <option value="deep">🔍 深度分析</option>
+                        <option value="md5">🎯 MD5指纹分析</option>
+                    </select>
+                </div>
+                <div style="margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap;">
+                    <button type="button" class="btn-primary-sm" onclick="
+                        document.getElementById('m3u8Url').value = document.getElementById('m3u8Url_2').value;
+                        document.getElementById('analysisMode').value = document.getElementById('analysisMode_2').value;
+                        parseM3u8();
+                    " style="padding: 14px 28px; font-size: 15px; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); color: white; font-weight: 600;">🔍 开始解析</button>
+                    <button type="button" class="btn-primary-sm" onclick="loadSampleM3u8()" style="padding: 14px 28px; font-size: 15px; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); color: white; font-weight: 600;">📥 加载示例</button>
+                </div>
+                <div id="parseStatus_2" style="margin-top: 16px; font-size: 14px; opacity: 0.9;">💡 提示：可以直接粘贴 M3U8 内容或输入 URL 地址</div>
+            </div>
+            <div id="parseStats_2" style="margin-top: 24px;"></div>
+        </div>
+
+        <!-- 子标签 2：资源站点 -->
+        <div class="sub-tab-panel" id="subtab-pc_sites" style="display:none">
+            <div class="panel">
+                <h3>➕ 添加 / 编辑站点</h3>
+                <form method="post">
+                    <input type="hidden" name="action" value="save_site">
+                    <input type="hidden" name="site_id" value="0">
+                    <div class="grid-flow">
+                        <label>名称<br><input type="text" name="site_name" placeholder="例：腾讯视频" required style="width:100%"></label>
+                        <label>短代码<br><input type="text" name="site_code" placeholder="例：tencent" style="width:100%"></label>
+                        <label style="grid-column:span 2">基础地址<br><input type="text" name="site_url" placeholder="https://v.qq.com" style="width:100%"></label>
+                        <label style="grid-column:span 2">匹配规则（URL 中包含的关键词，逗号分隔）<br><input type="text" name="site_pattern" placeholder="v.qq.com, iqiyi.com" style="width:100%"></label>
+                        <label style="grid-column:span 2">备注<br><input type="text" name="site_remark" style="width:100%"></label>
+                        <label><input type="checkbox" name="site_enabled" checked> 启用</label>
+                    </div>
+                    <div style="margin-top:12px">
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存站点</button>
+                    </div>
+                </form>
+            </div>
+            <div class="panel">
+                <h3>📋 现有站点（共 <?php echo count($sites); ?> 个）</h3>
+                <?php if (empty($sites)): ?>
+                    <p style="color:#888">暂无站点数据。</p>
+                <?php else: ?>
+                <table class="data-table">
+                    <thead><tr><th>ID</th><th>名称</th><th>短码</th><th>地址</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($sites as $s): ?>
+                    <tr>
+                        <td><?php echo (int)$s['id']; ?></td>
+                        <td><?php echo htmlspecialchars($s['name']); ?></td>
+                        <td><?php echo htmlspecialchars($s['short_code'] ?? ''); ?></td>
+                        <td style="font-size:12px;word-break:break-all;max-width:200px"><?php echo htmlspecialchars($s['base_url'] ?? ''); ?></td>
+                        <td><?php echo empty($s['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
+                        <td style="white-space:nowrap">
+                            <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
+                            <form method="post" style="display:inline" onsubmit="return confirm('确认删除？');"><input type="hidden" name="action" value="delete_site"><input type="hidden" name="site_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-danger-sm">🗑️</button></form>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- 子标签 3：解析日志 -->
+        <div class="sub-tab-panel" id="subtab-pc_logs" style="display:none">
+            <div class="panel">
+                <?php if (empty($parseLogs)): ?>
+                    <p style="color:#888">暂无解析记录。</p>
+                <?php else: ?>
+                <table class="data-table">
+                    <thead><tr><th>ID</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($parseLogs as $l): ?>
+                    <tr>
+                        <td><?php echo (int)$l['id']; ?></td>
+                        <td><?php echo htmlspecialchars($l['site_name'] ?? ''); ?></td>
+                        <td><?php echo (int)($l['total_segments'] ?? 0); ?></td>
+                        <td style="color:#dc3545"><?php echo (int)($l['ad_segments'] ?? 0); ?></td>
+                        <td style="color:#28a745"><?php echo (int)($l['keep_segments'] ?? 0); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+                <form method="post" style="margin-top:15px" onsubmit="return confirm('确认清空所有解析日志？')">
+                    <input type="hidden" name="action" value="clear_parse_log">
+                    <button type="submit" class="btn-danger-sm">🗑️ 清空解析日志</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 子标签 4：缓存管理 -->
+        <div class="sub-tab-panel" id="subtab-pc_cache" style="display:none">
+            <div class="panel">
+                <p>当前缓存目录：<code class="monocode"><?php echo htmlspecialchars($noadConfig['cache_dir'] ?? __DIR__ . '/cache'); ?></code></p>
+                <p>缓存有效期：<strong><?php echo (int)($noadConfig['cache_ttl'] ?? 1800); ?></strong> 秒（<?php echo round(($noadConfig['cache_ttl'] ?? 1800) / 60, 1); ?> 分钟）</p>
+                <form method="post" onsubmit="return confirm('确认清理所有 NoAd 缓存？')" style="margin-top:15px">
+                    <input type="hidden" name="action" value="clear_noad_cache">
+                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">🧹 清理 NoAd 缓存</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 子标签 5：解析源 -->
+        <div class="sub-tab-panel" id="subtab-pc_sources" style="display:none">
+            <div class="panel">
+                <h3>➕ 添加 / 编辑解析源</h3>
+                <form method="post">
+                    <input type="hidden" name="action" value="save_noad_source">
+                    <input type="hidden" name="source_id" value="0">
+                    <div class="grid-flow">
+                        <label>名称<br><input type="text" name="source_name" placeholder="例：主源A" required style="width:100%"></label>
+                        <label style="grid-column:span 2">接口地址（URL 中用 <code class="monocode">{url}</code> 作为播放页占位符）<br><input type="text" name="source_url" placeholder="https://jx.example.com/?url={url}" required style="width:100%"></label>
+                        <label>资源类型<br>
+                            <select name="source_type">
+                                <?php foreach ($resourceTypes as $tid => $t): ?>
+                                    <option value="<?php echo (int)$tid; ?>"><?php echo htmlspecialchars($t['name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <label>超时（秒）<br><input type="number" name="source_timeout" value="8" min="1" max="60"></label>
+                        <label>排序<br><input type="number" name="source_order" value="0" min="0" max="9999"></label>
+                        <label style="grid-column:span 2">匹配关键词（可选）<br><input type="text" name="source_match" placeholder="例：v.qq.com" style="width:100%"></label>
+                        <label style="grid-column:span 2">备注<br><input type="text" name="source_remark" style="width:100%"></label>
+                        <label><input type="checkbox" name="source_enabled" checked> 启用</label>
+                    </div>
+                    <div style="margin-top:12px">
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存解析源</button>
+                    </div>
+                </form>
+            </div>
+            <div class="panel">
+                <h3>📋 现有解析源（共 <?php echo count($noadSources); ?> 个）</h3>
+                <?php if (empty($noadSources)): ?>
+                    <p style="color:#888">⚠️ 暂未添加任何解析源。</p>
+                <?php else: ?>
+                <table class="data-table">
+                    <thead><tr><th>ID</th><th>名称</th><th>类型</th><th>接口地址</th><th>超时</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($noadSources as $s):
+                        $tn = $resourceTypes[(int)$s['type_id']]['name'] ?? '未分类';
+                    ?>
+                    <tr>
+                        <td><?php echo (int)$s['id']; ?></td>
+                        <td><?php echo htmlspecialchars($s['name']); ?></td>
+                        <td><?php echo htmlspecialchars($tn); ?></td>
+                        <td style="word-break:break-all;max-width:260px;font-size:12px"><?php echo htmlspecialchars($s['url']); ?></td>
+                        <td><?php echo (int)$s['timeout']; ?>s</td>
+                        <td><?php echo empty($s['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
+                        <td style="white-space:nowrap">
+                            <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_noad_source"><input type="hidden" name="source_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
+                            <form method="post" style="display:inline" onsubmit="return confirm('确认删除解析源 #<?php echo (int)$s['id']; ?>？');"><input type="hidden" name="action" value="delete_noad_source"><input type="hidden" name="source_id" value="<?php echo (int)$s['id']; ?>"><button type="submit" class="btn-danger-sm">🗑️</button></form>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <?php
+    // ===== 2. M3U8 解析（保留内容，隐藏不显示） =====
+    ?>
+    <div class="tab-panel" id="tab-m3u8_parse_old" style="display:none">
         <h2>📼 M3U8 解析与去广告分析</h2>
 
         <!-- 分析模式切换 -->
@@ -1647,7 +1827,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 3. 资源站点 =====
     ?>
-    <div class="tab-panel <?php echo $page==='sites'?'active':''; ?>" id="tab-sites">
+    <div class="tab-panel" id="tab-sites_old" style="display:none">
         <h2>🔗 资源站点管理</h2>
         <div class="panel">
             <h3>➕ 添加 / 编辑站点</h3>
@@ -1712,7 +1892,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 4. 解析日志 =====
     ?>
-    <div class="tab-panel <?php echo $page==='parse_log'?'active':''; ?>" id="tab-parse_log">
+    <div class="tab-panel" id="tab-parse_log_old" style="display:none">
         <h2>📄 解析日志</h2>
         <div class="panel">
             <?php if (empty($parseLogs)): ?>
@@ -1743,7 +1923,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 5. 缓存管理 =====
     ?>
-    <div class="tab-panel <?php echo $page==='cache_mgr'?'active':''; ?>" id="tab-cache_mgr">
+    <div class="tab-panel" id="tab-cache_mgr_old" style="display:none">
         <h2>💽 缓存管理</h2>
         <div class="panel">
             <p>当前缓存目录：<code class="monocode"><?php echo htmlspecialchars($noadConfig['cache_dir'] ?? __DIR__ . '/cache'); ?></code></p>
@@ -1806,6 +1986,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 </div>
                 <div style="margin-top:16px">
                     <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存配置</button>
+                    <button type="button" class="btn-secondary-sm" onclick="restoreFromAutoSave('save_noad_config')" style="font-size:14px;padding:10px 24px;margin-left:10px">↩ 还原上次自动保存</button>
                 </div>
             </form>
         </div>
@@ -1980,9 +2161,166 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                             <div style="padding:4px 0;font-size:14px"><label>最大簇长度：<input type="number" name="ruyi_max_cluster_len" min="5" max="50" value="<?php echo (int)$ruyiMaxClu; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
                         </div>
                     </div>
-                    <div style="margin-top:16px"><button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存如意参数</button></div>
+                    <div style="margin-top:16px"><button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存如意参数</button>
+                    <button type="button" class="btn-secondary-sm" onclick="restoreFromAutoSave('save_noad_config')" style="font-size:14px;padding:10px 24px;margin-left:10px">↩ 还原上次自动保存</button></div>
                 </form>
             </div>
+        </div>
+    </div>
+
+    <?php
+    // ===== 线路配置（整合：API 线路、平台规则） =====
+    ?>
+    <div class="tab-panel <?php echo $page==='line_config'?'active':''; ?>" id="tab-line_config">
+        <h2>📡 线路配置</h2>
+
+        <div class="tabs-nav" id="lineConfigSubNav" style="margin-bottom:20px;background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);padding:8px">
+            <button data-subtab="lc_api" class="active" style="color:white;background:rgba(255,255,255,0.15);border:none;padding:10px 18px;border-radius:10px;font-size:14px">📡 API 线路</button>
+            <button data-subtab="lc_platform" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🎯 平台规则</button>
+        </div>
+
+        <!-- 子标签 1：API 线路配置 -->
+        <div class="sub-tab-panel active" id="subtab-lc_api">
+            <div class="panel">
+                <form method="post">
+                    <input type="hidden" name="action" value="save_api">
+                    <table class="data-table" id="apiTable_2">
+                        <thead><tr><th>序号</th><th>接口名称</th><th>接口地址</th><th style="width:120px">超时(秒)</th><th style="width:100px">操作</th></tr></thead>
+                        <tbody id="apiTbody_2">
+                        <?php foreach ($parsedApis as $idx => $api): ?>
+                        <tr>
+                            <td style="color:#999;text-align:center"><?php echo $idx + 1; ?></td>
+                            <td><input type="text" name="api_name[]" value="<?php echo htmlspecialchars($api['name']); ?>" style="width:100%"></td>
+                            <td><input type="text" name="api_url[]" value="<?php echo htmlspecialchars($api['url']); ?>" style="width:100%"></td>
+                            <td><input type="number" name="api_timeout[]" value="<?php echo (int)$api['timeout']; ?>" min="1" max="120" style="width:100%"></td>
+                            <td class="center"><button type="button" class="btn-danger-sm" onclick="this.closest('tr').remove()">删除</button></td>
+                        </tr>
+                        <?php endforeach; ?>
+                        <?php if (count($parsedApis) === 0): ?>
+                        <tr><td colspan="5" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                    <div style="margin-top:12px">
+                        <button type="button" class="btn-secondary-sm" onclick="
+                            var tb = document.getElementById('apiTbody_2');
+                            var tr = document.createElement('tr');
+                            tr.innerHTML = '<td style=\'color:#999;text-align:center\'>+</td><td><input type=\'text\' name=\'api_name[]\' placeholder=\'接口名称\' style=\'width:100%\'></td><td><input type=\'text\' name=\'api_url[]\' placeholder=\'https://jx.example.com/?url=\' style=\'width:100%\'></td><td><input type=\'number\' name=\'api_timeout[]\' value=\'5\' min=\'1\' max=\'120\' style=\'width:100%\'></td><td><button type=\'button\' class=\'btn-danger-sm\' onclick=\'this.closest(&quot;tr&quot;).remove()\'>删除</button></td>';
+                            tb.appendChild(tr);
+                        " style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存全部</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 子标签 2：平台规则配置 -->
+        <div class="sub-tab-panel" id="subtab-lc_platform" style="display:none">
+            <div class="panel">
+                <form method="post">
+                    <input type="hidden" name="action" value="save_platform">
+                    <table class="data-table">
+                        <thead><tr><th>平台名称</th><th>匹配规则</th><th style="width:100px">操作</th></tr></thead>
+                        <tbody id="platTbody_2">
+                        <?php foreach ((array)$platformCfg as $name => $rule): ?>
+                        <tr>
+                            <td><input type="text" name="platform_name[]" value="<?php echo htmlspecialchars($name); ?>" style="width:100%"></td>
+                            <td><input type="text" name="platform_rule[]" value="<?php echo htmlspecialchars($rule); ?>" style="width:100%"></td>
+                            <td><button type="button" class="btn-danger-sm" onclick="this.closest('tr').remove()">删除</button></td>
+                        </tr>
+                        <?php endforeach; ?>
+                        <?php if (count((array)$platformCfg) === 0): ?>
+                        <tr><td colspan="3" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                    <div style="margin-top:12px">
+                        <button type="button" class="btn-secondary-sm" onclick="
+                            var tb = document.getElementById('platTbody_2');
+                            var tr = document.createElement('tr');
+                            tr.innerHTML = '<td><input type=\'text\' name=\'platform_name[]\' placeholder=\'平台名\' style=\'width:100%\'></td><td><input type=\'text\' name=\'platform_rule[]\' placeholder=\'域名关键字|接口名\' style=\'width:100%\'></td><td><button type=\'button\' class=\'btn-danger-sm\' onclick=\'this.closest(&quot;tr&quot;).remove()\'>删除</button></td>';
+                            tb.appendChild(tr);
+                        " style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存全部</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <?php
+    // ===== 接口中心（整合：系统开关、ZJK 自定义接口、接口在线测试） =====
+    ?>
+    <div class="tab-panel <?php echo $page==='interface_center'?'active':''; ?>" id="tab-interface_center">
+        <h2>🔌 接口中心</h2>
+
+        <div class="tabs-nav" id="interfaceCenterSubNav" style="margin-bottom:20px;background:linear-gradient(135deg,#38ef7d 0%,#11998e 100%);padding:8px">
+            <button data-subtab="ic_switch" class="active" style="color:white;background:rgba(255,255,255,0.15);border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔀 系统开关</button>
+            <button data-subtab="ic_zjk" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">📝 自定义接口</button>
+            <button data-subtab="ic_test" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🧪 接口测试</button>
+        </div>
+
+        <!-- 子标签 1：系统开关 -->
+        <div class="sub-tab-panel active" id="subtab-ic_switch">
+            <form method="post">
+                <input type="hidden" name="action" value="save_switch">
+                <div class="panel">
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_global_api" <?php if (!empty($switchConfig['enable_global_api'])) echo 'checked'; ?>> 启用总接口并发请求</label>
+                    <label style="display:block;margin:10px 0">ZJK 文件路径：<input type="text" name="zjk_file_path" value="<?php echo htmlspecialchars($switchConfig['zjk_file_path'] ?? 'ZJK.txt'); ?>" style="width:300px;margin-left:10px"></label>
+                    <label style="display:block;margin:10px 0">总接口超时（秒）：<input type="number" name="global_api_timeout" value="<?php echo (int)($switchConfig['global_api_timeout'] ?? 8); ?>" min="1" style="width:100px;margin-left:10px"></label>
+                    <label style="display:block;margin:10px 0">总接口并发数：<input type="number" name="global_api_count" value="<?php echo (int)($switchConfig['global_api_count'] ?? 6); ?>" min="0" style="width:100px;margin-left:10px"></label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_zjk_apis" <?php if (!empty($switchConfig['enable_zjk_apis'])) echo 'checked'; ?>> 启用 ZJK.txt 自定义接口</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_m3u8_direct" <?php if (!empty($switchConfig['enable_m3u8_direct'])) echo 'checked'; ?>> M3U8 直链快速通道</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_unified_display" <?php if (!empty($switchConfig['enable_unified_display'])) echo 'checked'; ?>> 统一响应格式</label>
+                    <div style="margin-top:12px">
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- 子标签 2：ZJK 自定义接口 -->
+        <div class="sub-tab-panel" id="subtab-ic_zjk" style="display:none">
+            <div class="panel">
+                <p style="color:#666">格式：<code class="monocode">接口地址|超时秒数</code>，每行一条。例如：<code class="monocode">https://jx.example.com/?url={url}|8</code></p>
+                <form method="post">
+                    <input type="hidden" name="action" value="save_zjk">
+                    <textarea name="zjk_content" style="width:100%;min-height:300px;font-family:Consolas,monospace;padding:12px;font-size:13px;border:1px solid #ddd;border-radius:8px"><?php echo htmlspecialchars($zjkContent); ?></textarea>
+                    <div style="margin-top:12px"><button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button></div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 子标签 3：接口在线测试 -->
+        <div class="sub-tab-panel" id="subtab-ic_test" style="display:none">
+            <div class="panel">
+                <form method="get">
+                    <input type="hidden" name="page" value="test">
+                    <div style="display:flex;gap:15px;align-items:center;flex-wrap:wrap">
+                        <label style="font-size:14px;color:#555">视频链接：</label>
+                        <input type="text" name="test_url" value="<?php echo isset($_GET['test_url']) ? htmlspecialchars($_GET['test_url']) : ''; ?>" style="flex:1;min-width:300px;padding:10px;border:1px solid #ddd;border-radius:6px" placeholder="https://v.qq.com/x/cover/example.html">
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">开始测试</button>
+                    </div>
+                </form>
+            </div>
+            <?php if (!empty($testResults)): ?>
+            <div class="panel">
+                <h3>📊 测试结果（<?php echo count($testResults); ?> 个接口）</h3>
+                <table class="data-table">
+                    <thead><tr><th>接口名称</th><th>HTTP 状态</th><th>响应时间</th><th>有效响应</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($testResults as $r): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($r['name']); ?></td>
+                        <td><span class="badge <?php echo $r['code'] == 200 ? 'badge-green' : 'badge-red'; ?>"><?php echo (int)$r['code']; ?></span></td>
+                        <td><?php echo number_format($r['time'], 3); ?> 秒</td>
+                        <td><span class="badge <?php echo $r['valid'] ? 'badge-green' : 'badge-red'; ?>"><?php echo $r['valid'] ? '✅ 成功' : '❌ 失败'; ?></span></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -2215,7 +2553,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 10. API 线路配置 =====
     ?>
-    <div class="tab-panel <?php echo $page==='api'?'active':''; ?>" id="tab-api">
+    <div class="tab-panel" id="tab-api_old" style="display:none">
         <h2>📡 API 线路配置</h2>
         <div class="panel">
             <form method="post">
@@ -2248,7 +2586,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 11. 平台规则 =====
     ?>
-    <div class="tab-panel <?php echo $page==='platform'?'active':''; ?>" id="tab-platform">
+    <div class="tab-panel" id="tab-platform_old" style="display:none">
         <h2>🎯 平台规则配置</h2>
         <div class="panel">
             <form method="post">
@@ -2279,7 +2617,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 12. 系统开关 =====
     ?>
-    <div class="tab-panel <?php echo $page==='switch'?'active':''; ?>" id="tab-switch">
+    <div class="tab-panel" id="tab-switch_old" style="display:none">
         <h2>🔀 系统开关</h2>
         <form method="post">
             <input type="hidden" name="action" value="save_switch">
@@ -2301,7 +2639,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 13. ZJK 自定义接口 =====
     ?>
-    <div class="tab-panel <?php echo $page==='zjk'?'active':''; ?>" id="tab-zjk">
+    <div class="tab-panel" id="tab-zjk_old" style="display:none">
         <h2>📝 ZJK.txt 自定义接口</h2>
         <div class="panel">
             <p style="color:#666">格式：<code class="monocode">接口地址|超时秒数</code>，每行一条。例如：<code class="monocode">https://jx.example.com/?url={url}|8</code></p>
@@ -2316,7 +2654,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <?php
     // ===== 14. 接口在线测试 =====
     ?>
-    <div class="tab-panel <?php echo $page==='test'?'active':''; ?>" id="tab-test">
+    <div class="tab-panel" id="tab-test_old" style="display:none">
         <h2>🧪 接口在线测试</h2>
         <div class="panel">
             <form method="get">
@@ -3367,7 +3705,10 @@ https://cdn.example.com/video/part4.ts
                     <label style="display:block;margin:10px 0">最大登录失败次数：<input type="number" name="max_login_attempts" value="<?php echo max(1, (int)($adminConfig['max_login_attempts'] ?? 5)); ?>" min="1" max="999" style="width:100px;margin-left:10px"></label>
                     <label style="display:block;margin:10px 0">失败锁定时长（秒）：<input type="number" name="lockout_duration" value="<?php echo max(60, (int)($adminConfig['lockout_duration'] ?? 300)); ?>" min="60" max="86400" style="width:100px;margin-left:10px"></label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_log" <?php if (!empty($adminConfig['enable_log'])) echo 'checked'; ?>> 📒 启用操作日志</label>
-                    <div style="margin-top:16px"><button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存后台设置</button></div>
+                    <div style="margin-top:16px">
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存后台设置</button>
+                        <button type="button" class="btn-secondary-sm" onclick="restoreFromAutoSave('save_admin_config')" style="font-size:14px;padding:10px 24px;margin-left:10px">↩ 还原上次自动保存</button>
+                    </div>
                 </div>
             </form>
 
@@ -4140,6 +4481,162 @@ function featResetDefault() {
         }, 3500);
     }
 })();
+
+// ===== 增强的子标签切换 - 处理所有 SubNav 容器（冗余但安全） =====
+(function() {
+    var subNavs = document.querySelectorAll('[id$="SubNav"]');
+    subNavs.forEach(function(nav) {
+        var btns = nav.querySelectorAll('button[data-subtab]');
+        btns.forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                var subtab = this.getAttribute('data-subtab');
+                var parentPanel = nav.closest('.tab-panel');
+                if (!parentPanel) return;
+                var subPanels = parentPanel.querySelectorAll('.sub-tab-panel');
+                btns.forEach(function(b) {
+                    b.classList.remove('active');
+                    b.style.background = 'transparent';
+                });
+                this.classList.add('active');
+                this.style.background = 'rgba(255,255,255,0.15)';
+                subPanels.forEach(function(sp) {
+                    if (sp.id === 'subtab-' + subtab) {
+                        sp.classList.add('active');
+                        sp.style.display = 'block';
+                    } else {
+                        sp.classList.remove('active');
+                        sp.style.display = 'none';
+                    }
+                });
+            });
+        });
+    });
+})();
+
+// ===== 自动保存功能（点击空白区域时，保存当前激活子标签内的表单到 localStorage） =====
+(function() {
+    var saveCooldown = 3000; // 3 秒冷却，避免频繁保存
+    var lastSaveTime = 0;
+
+    document.addEventListener('click', function(e) {
+        // 如果点击的是交互元素（按钮、输入框、链接、下拉等），不触发自动保存
+        var interactive = e.target.closest('button, input, select, textarea, a, label, [data-tab], [data-subtab]');
+        if (interactive) return;
+
+        var now = Date.now();
+        if (now - lastSaveTime < saveCooldown) return;
+
+        // 找当前激活的 tab-panel
+        var activePanel = document.querySelector('.tab-panel.active');
+        if (!activePanel) return;
+
+        // 检查是否有子标签，如果有，优先取激活的子标签
+        var subActive = activePanel.querySelector('.sub-tab-panel.active');
+        var targetPanel = subActive || activePanel;
+
+        var form = targetPanel.querySelector('form[method="post"]');
+        if (!form) return;
+
+        // 检查表单是否有可提交内容（输入框）
+        var inputs = form.querySelectorAll('input[type="text"], input[type="number"], input[type="checkbox"], input[type="email"], input[type="url"], textarea, select');
+        if (inputs.length === 0) return;
+
+        // 取得动作（action 隐藏字段）
+        var actionInput = form.querySelector('input[name="action"]');
+        var actionName = actionInput ? actionInput.value : 'unknown';
+
+        // 保存当前状态到 localStorage
+        var formData = {};
+        inputs.forEach(function(inp) {
+            var key = inp.name || '';
+            if (!key) return;
+            if (inp.type === 'checkbox') {
+                formData[key] = inp.checked;
+            } else {
+                formData[key] = inp.value;
+            }
+        });
+        try {
+            localStorage.setItem('adminAutoSave_' + actionName, JSON.stringify({time: now, data: formData}));
+        } catch (err) { /* localStorage 可能禁用，静默失败 */ }
+
+        showAutoSaveNotification('✓ 已自动保存当前设置');
+        lastSaveTime = now;
+    });
+
+    function showAutoSaveNotification(msg) {
+        var oldNotice = document.getElementById('autoSaveNotice');
+        if (oldNotice) oldNotice.remove();
+
+        var notice = document.createElement('div');
+        notice.id = 'autoSaveNotice';
+        notice.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#11998e,#38ef7d);color:white;padding:12px 24px;border-radius:12px;font-weight:600;font-size:14px;box-shadow:0 4px 20px rgba(17,153,142,0.3);z-index:99999;animation:slideInRight 0.4s ease;';
+        notice.textContent = msg;
+        document.body.appendChild(notice);
+
+        setTimeout(function() {
+            notice.style.opacity = '0';
+            notice.style.transition = 'opacity 0.4s';
+            setTimeout(function() { notice.remove(); }, 400);
+        }, 2000);
+    }
+
+    // 添加动画（如果还没加过）
+    if (!document.getElementById('autoSaveStyle')) {
+        var style = document.createElement('style');
+        style.id = 'autoSaveStyle';
+        style.textContent = '@keyframes slideInRight{from{transform:translateX(100%);opacity:0}to{transform:none;opacity:1}}';
+        document.head.appendChild(style);
+    }
+})();
+
+// ===== 还原功能 - 从 localStorage 恢复指定动作的表单值 =====
+function restoreFromAutoSave(actionName) {
+    try {
+        var saved = localStorage.getItem('adminAutoSave_' + actionName);
+        if (!saved) {
+            alert('没有找到自动保存记录 (action: ' + actionName + ')');
+            return;
+        }
+        var parsed = JSON.parse(saved);
+        var timeStr = new Date(parsed.time).toLocaleString();
+        if (!confirm('确认还原 ' + timeStr + ' 的保存内容？\n当前页面上未保存的修改将会被覆盖。')) return;
+
+        // 查找当前激活面板内的对应表单
+        var activePanel = document.querySelector('.tab-panel.active');
+        if (!activePanel) { alert('找不到当前面板'); return; }
+
+        var forms = activePanel.querySelectorAll('form[method="post"]');
+        var targetForm = null;
+        for (var fi = 0; fi < forms.length; fi++) {
+            var a = forms[fi].querySelector('input[name="action"]');
+            if (a && a.value === actionName) {
+                targetForm = forms[fi];
+                break;
+            }
+        }
+        // 回退：取第一个表单
+        if (!targetForm && forms.length > 0) targetForm = forms[0];
+        if (!targetForm) { alert('找不到可还原的表单'); return; }
+
+        // 恢复输入值
+        var restoredCount = 0;
+        Object.keys(parsed.data).forEach(function(key) {
+            var input = targetForm.querySelector('[name="' + key + '"]');
+            if (input) {
+                if (input.type === 'checkbox') {
+                    input.checked = !!parsed.data[key];
+                } else {
+                    input.value = parsed.data[key];
+                }
+                restoredCount++;
+            }
+        });
+        alert('✓ 已还原上次自动保存（共 ' + restoredCount + ' 项）');
+    } catch (e) {
+        alert('还原失败：' + e.message);
+    }
+}
 </script>
 </body>
 </html>
