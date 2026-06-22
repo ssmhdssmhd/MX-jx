@@ -246,6 +246,8 @@ $ajaxEarlyWhitelist = [
     'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
     'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist',
     'ajax_feat_test', 'ajax_feat_stats', 'ajax_feat_learn', 'ajax_feat_mark',
+    'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
+    'ajax_ad_snippet_fetch',
 ];
 if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
     header('Content-Type: application/json; charset=utf-8');
@@ -317,6 +319,64 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             'applied' => $result['applied'] ?? [],
             'changed' => ($result['data'] ?? $input) !== $input,
         ], JSON_UNESCAPED_UNICODE);
+    } elseif ($ajaxEarlyAction === 'ajax_tools_list') {
+        require_once __DIR__ . '/tools/core/ToolManager.php';
+        $tm = ToolManager::getInstance();
+        echo json_encode(['code' => 200, 'tools' => $tm->listTools()], JSON_UNESCAPED_UNICODE);
+        exit;
+    } elseif ($ajaxEarlyAction === 'ajax_tools_run') {
+        require_once __DIR__ . '/tools/core/ToolManager.php';
+        $tm = ToolManager::getInstance();
+        $toolId = trim($_POST['tool_id'] ?? '');
+        $paramsRaw = $_POST['params'] ?? '';
+        $params = [];
+        if (is_array($paramsRaw)) {
+            $params = $paramsRaw;
+        } elseif (is_string($paramsRaw) && $paramsRaw !== '') {
+            $decoded = json_decode($paramsRaw, true);
+            if (is_array($decoded)) $params = $decoded;
+        }
+        $result = $tm->runTool($toolId, $params);
+        echo json_encode(['code' => 200, 'result' => $result], JSON_UNESCAPED_UNICODE);
+        exit;
+    } elseif ($ajaxEarlyAction === 'ajax_tools_reload') {
+        require_once __DIR__ . '/tools/core/ToolManager.php';
+        $tm = ToolManager::getInstance();
+        $count = $tm->reload();
+        echo json_encode(['code' => 200, 'count' => $count, 'tools' => $tm->listTools()], JSON_UNESCAPED_UNICODE);
+        exit;
+    } elseif ($ajaxEarlyAction === 'ajax_tools_combo') {
+        require_once __DIR__ . '/tools/core/ToolManager.php';
+        $tm = ToolManager::getInstance();
+        $input = trim($_POST['input'] ?? '');
+        $mode = $_POST['mode'] ?? 'auto';
+        if (empty($input)) { echo json_encode(['code' => 400, 'msg' => 'input 参数不能为空'], JSON_UNESCAPED_UNICODE); exit; }
+        
+        $content = $input;
+        $sourceUrl = '';
+        $isM3u8 = stripos($input, '#EXTM3U') !== false;
+        
+        if (!$isM3u8 && filter_var($input, FILTER_VALIDATE_URL)) {
+            $sourceUrl = $input;
+            $fetched = @file_get_contents($input);
+            if ($fetched !== false) {
+                $content = $fetched;
+                $isM3u8 = stripos($content, '#EXTM3U') !== false;
+            }
+        }
+        
+        $featureResult = $tm->runTool('feature_extractor', ['input' => $content, 'mode' => 'auto']);
+        $adResult = $tm->runTool('ad_cleaner_m3u8', ['input' => $content, 'mode' => $isM3u8 ? 'm3u8' : 'auto']);
+        
+        echo json_encode([
+            'code' => 200, 'msg' => 'ok',
+            'source_url' => $sourceUrl,
+            'content_size' => strlen($content),
+            'is_m3u8' => $isM3u8,
+            'feature' => $featureResult,
+            'ad_clean' => $adResult,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
     } elseif ($ajaxEarlyAction === 'ajax_ruyi_test' || $ajaxEarlyAction === 'ajax_ruyi_auto_optimize') {        // === 如意算法：测试 / 自动优化 ===
         // 步骤 1：选择示例 M3U8 URL
         $sampleUrl = trim($_POST['sample_url'] ?? '');
