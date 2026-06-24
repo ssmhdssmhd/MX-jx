@@ -48,6 +48,18 @@ class AdCleanerTool extends AbstractTool
         '剧集', '第', '集', 'part', '片头', '片尾',
     ];
 
+    // 序号跳跃检测配置
+    private $seqJumpConfig = [
+        'enabled' => true,
+        'seq_threshold' => 800000,
+        'jump_threshold' => 1000,
+        'enable_sandwich' => true,
+        'site_patterns' => [
+            'lfthirtytwo.com',
+            'lzcdn27.com',
+        ],
+    ];
+
     public function name() { return 'M3U8/URL 广告片段清洗工具'; }
     public function description() { return '对 M3U8 播放列表按关键词/域名/时长等规则进行片段级广告过滤，也支持 URL 与纯文本中的广告关键词清洗。纯本地化，零外部依赖。'; }
     public function version() { return '1.0.0'; }
@@ -255,15 +267,141 @@ class AdCleanerTool extends AbstractTool
             if (!$hasEnd) $outputLines[] = '#EXT-X-ENDLIST';
         }
 
+        $output = implode("\n", $outputLines);
+        $disconCount = substr_count($content, '#EXT-X-DISCONTINUITY');
+
+        if (!empty($this->seqJumpConfig['enabled']) && $disconCount > 0) {
+            $seqJumpResult = $this->applySequenceJumpDetection($output, $totalSegments);
+            if ($seqJumpResult['removed'] > 0) {
+                $removedSegments += $seqJumpResult['removed'];
+                $removedDetails = array_merge($removedDetails, $seqJumpResult['details']);
+                $output = $seqJumpResult['output'];
+            }
+        }
+
         return [
             'mode'            => 'm3u8',
             'total_segments'  => $totalSegments,
             'removed_segments'=> $removedSegments,
             'kept_segments'   => $totalSegments - $removedSegments,
             'removed_details' => $removedDetails,
-            'output'          => implode("\n", $outputLines),
+            'output'          => $output,
+            'discontinuity_count' => $disconCount,
             'keywords_used'   => count($keywords),
         ];
+    }
+
+    /**
+     * 序号跳跃广告检测
+     * 检测 TS 文件名序号的跳跃模式，识别插播广告块
+     */
+    private function applySequenceJumpDetection($m3u8Content, $totalSegments)
+    {
+        $result = [
+            'removed' => 0,
+            'details' => [],
+            'output' => $m3u8Content,
+        ];
+
+        $lines = preg_split('/\r\n|\r|\n/', $m3u8Content);
+        $lines = array_values(array_filter($lines, 'strlen'));
+
+        $segments = [];
+        $currentDuration = 0;
+        $segmentIndex = 0;
+
+        foreach ($lines as $lineNum => $line) {
+            $trim = trim($line);
+            if ($trim === '') continue;
+
+            if (stripos($trim, '#EXTINF:') === 0) {
+                $durStr = substr($trim, 8);
+                $commaPos = strpos($durStr, ',');
+                if ($commaPos !== false) $durStr = substr($durStr, 0, $commaPos);
+                $currentDuration = (float)trim($durStr);
+                continue;
+            }
+
+            if ($trim && strpos($trim, '#') !== 0 && 
+                (stripos($trim, '.ts') !== false || stripos($trim, '.m4s') !== false)) {
+                $seqNum = $this->extractSeqNumFromUri($trim);
+                $segments[] = [
+                    'uri' => $trim,
+                    'duration' => $currentDuration,
+                    'seq_num' => $seqNum,
+                    'line_num' => $lineNum,
+                    'index' => $segmentIndex,
+                ];
+                $segmentIndex++;
+                $currentDuration = 0;
+            }
+        }
+
+        if (count($segments) < 3) {
+            return $result;
+        }
+
+        $adSegmentIndices = [];
+
+        $seqThreshold = $this->seqJumpConfig['seq_threshold'] ?? 800000;
+        foreach ($segments as $seg) {
+            if ($seg['seq_num'] !== null && $seg['seq_num'] >= $seqThreshold) {
+                $adSegmentIndices[$seg['index']] = true;
+                $result['details'][] = [
+                    'index' => $seg['index'] + 1,
+                    'uri' => $seg['uri'],
+                    'duration' => $seg['duration'],
+                    'reason' => "序号阈值检测: seq={$seg['seq_num']} >= {$seqThreshold}",
+                ];
+            }
+        }
+
+        if (count($adSegmentIndices) === 0) {
+            return $result;
+        }
+
+        $result['removed'] = count($adSegmentIndices);
+
+        $adLineNums = [];
+        foreach ($segments as $seg) {
+            if (isset($adSegmentIndices[$seg['index']])) {
+                $adLineNums[$seg['line_num']] = true;
+                $prevLine = $seg['line_num'] - 1;
+                while ($prevLine >= 0 && trim($lines[$prevLine]) === '') {
+                    $prevLine--;
+                }
+                if ($prevLine >= 0 && stripos(trim($lines[$prevLine]), '#EXTINF:') === 0) {
+                    $adLineNums[$prevLine] = true;
+                }
+            }
+        }
+
+        $newLines = [];
+        foreach ($lines as $lineNum => $line) {
+            if (!isset($adLineNums[$lineNum])) {
+                $newLines[] = $line;
+            }
+        }
+
+        $result['output'] = implode("\n", $newLines);
+        return $result;
+    }
+
+    /**
+     * 从 URI 中提取序号
+     */
+    private function extractSeqNumFromUri($uri)
+    {
+        $fileName = basename($uri);
+        $seqNum = null;
+
+        if (preg_match('/(\d+)\.ts$/i', $fileName, $matches)) {
+            $seqNum = (int)$matches[1];
+        } elseif (preg_match('/_(\d+)[_\.]/', $fileName, $matches)) {
+            $seqNum = (int)$matches[1];
+        }
+
+        return $seqNum;
     }
 
     private $lastAdReason = '';
