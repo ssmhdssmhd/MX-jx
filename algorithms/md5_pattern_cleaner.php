@@ -274,7 +274,6 @@ class MD5PatternCleaner
         $segStart = microtime(true);
         $ch = curl_init($url);
 
-        // 配置 cURL（代理 + UA + 速率限制）
         $proxyUsed = '';
         if ($this->useProxy && $this->ipGuard !== null) {
             $this->ipGuard->waitForRateLimit();
@@ -286,30 +285,13 @@ class MD5PatternCleaner
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, $this->segmentTimeout);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+            curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+            curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:!DH');
         }
 
-        // 流式处理：使用 WRITEFUNCTION 边下载边计算 MD5，不保存整个文件
-        $hashCtx = hash_init('md5');
-        $totalBytes = 0;
-        $maxBytes = $this->maxSegmentSizeKB * 1024;
-
-        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch, $data) use (&$hashCtx, &$totalBytes, $maxBytes) {
-            $len = strlen($data);
-            if ($totalBytes + $len > $maxBytes) {
-                // 超过大小限制，停止下载，但保留已计算的数据
-                $partial = substr($data, 0, $maxBytes - $totalBytes);
-                hash_update($hashCtx, $partial);
-                $totalBytes = $maxBytes;
-                return 0; // 返回 0 停止下载（curl 会报错，但我们忽略）
-            }
-            hash_update($hashCtx, $data);
-            $totalBytes += $len;
-            return $len;
-        });
-
-        curl_setopt($ch, CURLOPT_NOBODY, false);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HEADER, false);
+        curl_setopt($ch, CURLOPT_NOBODY, false);
 
         $data = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -318,18 +300,20 @@ class MD5PatternCleaner
 
         $downloadMs = round((microtime(true) - $segStart) * 1000, 1);
 
-        if ($httpCode >= 200 && $httpCode < 300 && $totalBytes > 0) {
-            // 如果因大小限制而停止，也视为成功（部分哈希就够用）
-            $md5 = hash_final($hashCtx);
+        if ($httpCode >= 200 && $httpCode < 300 && is_string($data) && strlen($data) > 0) {
+            $maxBytes = $this->maxSegmentSizeKB * 1024;
+            if (strlen($data) > $maxBytes) {
+                $data = substr($data, 0, $maxBytes);
+            }
+            $md5 = md5($data);
             $result['md5'] = $md5;
-            $result['size'] = $totalBytes;
+            $result['size'] = strlen($data);
             $result['download_ms'] = $downloadMs;
             $result['success'] = true;
             $result['proxy'] = $proxyUsed;
             return $result;
         }
 
-        // 失败：标记代理失败
         if ($this->useProxy && $this->ipGuard !== null && $proxyUsed !== '') {
             $this->ipGuard->markCurrentProxyFailed();
         }
@@ -485,12 +469,11 @@ class MD5PatternCleaner
         $results = [];
         $multiHandle = curl_multi_init();
         $activeHandles = [];
-        $pending = $segments;
+        $pending = array_values($segments);
         $nextIdx = 0;
+        $maxBytes = $this->maxSegmentSizeKB * 1024;
 
-        // 分批填充初始连接
-        while (count($activeHandles) < $concurrency && $nextIdx < count($pending)) {
-            $seg = $pending[$nextIdx];
+        $addHandle = function ($seg, $idx) use ($videoUrl, $multiHandle, &$activeHandles, $maxBytes) {
             $url = $this->resolveUrl($videoUrl, $seg['uri']);
             $ch = curl_init($url);
 
@@ -503,48 +486,34 @@ class MD5PatternCleaner
                 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
                 curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
                 curl_setopt($ch, CURLOPT_TIMEOUT, $this->segmentTimeout);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+                curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+                curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:!DH');
             }
 
-            $hashCtx = hash_init('md5');
-            $totalBytesRef = 0;
-            $maxBytes = $this->maxSegmentSizeKB * 1024;
-            $proxyRef = $proxyUsed;
-
-            curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch, $data) use (&$hashCtx, &$totalBytesRef, $maxBytes) {
-                $len = strlen($data);
-                if ($totalBytesRef + $len > $maxBytes) {
-                    $partial = substr($data, 0, $maxBytes - $totalBytesRef);
-                    hash_update($hashCtx, $partial);
-                    $totalBytesRef = $maxBytes;
-                    return 0;
-                }
-                hash_update($hashCtx, $data);
-                $totalBytesRef += $len;
-                return $len;
-            });
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HEADER, false);
 
             curl_multi_add_handle($multiHandle, $ch);
             $activeHandles[(int)$ch] = [
                 'ch' => $ch,
-                'seg_index' => $nextIdx,
-                'hash_ctx' => $hashCtx,
-                'total_bytes' => &$totalBytesRef,
+                'seg_index' => $idx,
                 'start_time' => microtime(true),
-                'proxy' => $proxyRef,
+                'proxy' => $proxyUsed,
             ];
+        };
+
+        while (count($activeHandles) < $concurrency && $nextIdx < count($pending)) {
+            $addHandle($pending[$nextIdx], $nextIdx);
             $nextIdx++;
         }
 
-        // 循环处理
         do {
             $status = curl_multi_exec($multiHandle, $active);
             if ($active > 0) {
-                curl_multi_select($multiHandle, 0.1); // 等待 100ms，允许其他操作
+                curl_multi_select($multiHandle, 0.1);
             }
 
-            // 处理已完成的连接
             while ($info = curl_multi_info_read($multiHandle)) {
                 $ch = $info['handle'];
                 $key = (int)$ch;
@@ -553,91 +522,50 @@ class MD5PatternCleaner
                     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
                     $curlError = curl_error($ch);
                     $downloadMs = round((microtime(true) - $h['start_time']) * 1000, 1);
+                    $data = curl_multi_getcontent($ch);
 
                     $idx = $h['seg_index'];
-                    if ($httpCode >= 200 && $httpCode < 300 && $h['total_bytes'] > 0) {
-                        $md5 = hash_final($h['hash_ctx']);
-                        $results[$idx] = [
+                    $origIndex = isset($pending[$idx]['index']) ? $pending[$idx]['index'] : $idx;
+                    if ($httpCode >= 200 && $httpCode < 300 && is_string($data) && strlen($data) > 0) {
+                        if (strlen($data) > $maxBytes) {
+                            $data = substr($data, 0, $maxBytes);
+                        }
+                        $md5 = md5($data);
+                        $results[$origIndex] = [
                             'success' => true,
                             'md5' => $md5,
-                            'size' => $h['total_bytes'],
+                            'size' => strlen($data),
                             'download_ms' => $downloadMs,
                             'proxy' => $h['proxy'],
                         ];
                     } else {
-                        $results[$idx] = [
+                        $results[$origIndex] = [
                             'success' => false,
                             'md5' => '',
                             'size' => 0,
                             'download_ms' => $downloadMs,
                             'error' => 'HTTP ' . $httpCode . ' - ' . ($curlError ?: '未知错误'),
                         ];
-                        if ($this->useProxy && !empty($h['proxy'])) {
-                            // 标记失败
-                        }
                     }
 
                     curl_multi_remove_handle($multiHandle, $ch);
                     curl_close($ch);
                     unset($activeHandles[$key]);
 
-                    // 填充下一个
                     if ($nextIdx < count($pending) && !$this->isTimedOut() && !SmartConcurrencyController::isProtectionMode()) {
-                        $seg = $pending[$nextIdx];
-                        $url = $this->resolveUrl($videoUrl, $seg['uri']);
-                        $newCh = curl_init($url);
-
-                        $proxyUsed = '';
-                        if ($this->useProxy && $this->ipGuard) {
-                            $proxyUsed = $this->ipGuard->configureCurl($newCh, $videoUrl);
-                        } else {
-                            curl_setopt($newCh, CURLOPT_USERAGENT, $this->ipGuard ? $this->ipGuard->getRandomUA() : 'Mozilla/5.0');
-                            curl_setopt($newCh, CURLOPT_SSL_VERIFYPEER, false);
-                            curl_setopt($newCh, CURLOPT_SSL_VERIFYHOST, false);
-                            curl_setopt($newCh, CURLOPT_FOLLOWLOCATION, true);
-                            curl_setopt($newCh, CURLOPT_TIMEOUT, $this->segmentTimeout);
-                        }
-
-                        $newHashCtx = hash_init('md5');
-                        $newBytesRef = 0;
-                        $maxBytes2 = $this->maxSegmentSizeKB * 1024;
-                        $newProxyRef = $proxyUsed;
-
-                        curl_setopt($newCh, CURLOPT_WRITEFUNCTION, function ($ch, $data) use (&$newHashCtx, &$newBytesRef, $maxBytes2) {
-                            $len = strlen($data);
-                            if ($newBytesRef + $len > $maxBytes2) {
-                                $partial = substr($data, 0, $maxBytes2 - $newBytesRef);
-                                hash_update($newHashCtx, $partial);
-                                $newBytesRef = $maxBytes2;
-                                return 0;
-                            }
-                            hash_update($newHashCtx, $data);
-                            $newBytesRef += $len;
-                            return $len;
-                        });
-                        curl_setopt($newCh, CURLOPT_RETURNTRANSFER, true);
-                        curl_setopt($newCh, CURLOPT_HEADER, false);
-
-                        curl_multi_add_handle($multiHandle, $newCh);
-                        $activeHandles[(int)$newCh] = [
-                            'ch' => $newCh,
-                            'seg_index' => $nextIdx,
-                            'hash_ctx' => $newHashCtx,
-                            'total_bytes' => &$newBytesRef,
-                            'start_time' => microtime(true),
-                            'proxy' => $newProxyRef,
-                        ];
+                        $addHandle($pending[$nextIdx], $nextIdx);
                         $nextIdx++;
                     }
                 }
             }
 
             if ($this->isTimedOut() || SmartConcurrencyController::isProtectionMode()) {
-                // 超时或保护模式，取消剩余
                 foreach ($activeHandles as $key => $h) {
                     curl_multi_remove_handle($multiHandle, $h['ch']);
                     curl_close($h['ch']);
-                    $results[$h['seg_index']] = [
+                    $idx = $h['seg_index'];
+                    $origIndex = isset($pending[$idx]['index']) ? $pending[$idx]['index'] : $idx;
+                    $results[$origIndex] = [
                         'success' => false,
                         'md5' => '',
                         'size' => 0,
@@ -652,7 +580,6 @@ class MD5PatternCleaner
 
         curl_multi_close($multiHandle);
 
-        // 按索引排序
         ksort($results);
         return $results;
     }
