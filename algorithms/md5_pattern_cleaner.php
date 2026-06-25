@@ -182,18 +182,36 @@ class MD5PatternCleaner
         $headerLines = [];
         $currentDuration = 0;
         $hasEnd = false;
+        $isMaster = false;
+        $masterVariants = [];
+        $currentVariant = [];
 
         foreach ($lines as $i => $line) {
             $line = trim($line);
             if ($line === '') continue;
 
-            if ($i < 5 && strpos($line, '#EXT') === 0) {
-                $headerLines[] = $line;
-            }
-
             if ($line === '#EXT-X-ENDLIST') {
                 $hasEnd = true;
                 continue;
+            }
+
+            if (strpos($line, '#EXT-X-STREAM-INF:') === 0) {
+                $isMaster = true;
+                $currentVariant = ['stream_inf' => $line, 'uri' => ''];
+                continue;
+            }
+
+            if ($isMaster && strpos($line, '#') !== 0 && $line !== '') {
+                if (!empty($currentVariant)) {
+                    $currentVariant['uri'] = $line;
+                    $masterVariants[] = $currentVariant;
+                }
+                $currentVariant = [];
+                continue;
+            }
+
+            if ($i < 5 && strpos($line, '#EXT') === 0) {
+                $headerLines[] = $line;
             }
 
             if (strpos($line, '#EXTINF:') === 0) {
@@ -213,13 +231,15 @@ class MD5PatternCleaner
             'segments' => $segments,
             'header' => implode("\n", $headerLines) . "\n",
             'has_end' => $hasEnd,
+            'is_master' => $isMaster,
+            'master_variants' => $masterVariants,
         ];
     }
 
     /**
      * 解析相对 URL 为绝对 URL
      */
-    private function resolveUrl($baseUrl, $relativeUrl)
+    public static function resolveUrl($baseUrl, $relativeUrl)
     {
         if (strpos($relativeUrl, 'http://') === 0 || strpos($relativeUrl, 'https://') === 0) {
             return $relativeUrl;
@@ -1180,6 +1200,8 @@ class MD5PatternCleaner
             $result = self::downloadM3U8Ex($url);
             if ($result) {
                 $result['final_url'] = $url;
+                $resolved = self::resolveMasterPlaylist($url, $result);
+                if ($resolved) return $resolved;
                 return $result;
             }
             return false;
@@ -1192,6 +1214,8 @@ class MD5PatternCleaner
 
         if (strpos($content, '#EXTM3U') !== false) {
             $pageResult['final_url'] = $url;
+            $resolved = self::resolveMasterPlaylist($url, $pageResult);
+            if ($resolved) return $resolved;
             return $pageResult;
         }
 
@@ -1205,6 +1229,8 @@ class MD5PatternCleaner
                 $subResult = self::downloadM3U8Ex($m3u8Url);
                 if ($subResult) {
                     $subResult['final_url'] = $m3u8Url;
+                    $resolved = self::resolveMasterPlaylist($m3u8Url, $subResult);
+                    if ($resolved) return $resolved;
                     return $subResult;
                 }
             }
@@ -1215,6 +1241,8 @@ class MD5PatternCleaner
                 $subResult = self::downloadM3U8Ex($m3u8Url);
                 if ($subResult) {
                     $subResult['final_url'] = $m3u8Url;
+                    $resolved = self::resolveMasterPlaylist($m3u8Url, $subResult);
+                    if ($resolved) return $resolved;
                     return $subResult;
                 }
             }
@@ -1230,10 +1258,157 @@ class MD5PatternCleaner
                     $subResult = self::downloadM3U8Ex($candidate);
                     if ($subResult && strpos($subResult['content'], '#EXTM3U') !== false) {
                         $subResult['final_url'] = $candidate;
+                        $resolved = self::resolveMasterPlaylist($candidate, $subResult);
+                        if ($resolved) return $resolved;
                         return $subResult;
                     }
                 }
             }
+        }
+
+        $extractedUrls = self::extractAllM3u8Urls($content);
+        foreach ($extractedUrls as $m3u8Url) {
+            if (!filter_var($m3u8Url, FILTER_VALIDATE_URL)) {
+                $m3u8Url = self::resolveUrl($url, $m3u8Url);
+            }
+            $subResult = self::downloadM3U8Ex($m3u8Url);
+            if ($subResult) {
+                $subResult['final_url'] = $m3u8Url;
+                $resolved = self::resolveMasterPlaylist($m3u8Url, $subResult);
+                if ($resolved) return $resolved;
+                return $subResult;
+            }
+        }
+
+        $streamUrls = self::extractStreamUrls($content);
+        foreach ($streamUrls as $streamUrl) {
+            if (!filter_var($streamUrl, FILTER_VALIDATE_URL)) {
+                $streamUrl = self::resolveUrl($url, $streamUrl);
+            }
+            $subResult = self::downloadM3U8Ex($streamUrl);
+            if ($subResult && strpos($subResult['content'], '#EXTM3U') !== false) {
+                $subResult['final_url'] = $streamUrl;
+                $resolved = self::resolveMasterPlaylist($streamUrl, $subResult);
+                if ($resolved) return $resolved;
+                return $subResult;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 提取页面中所有可能的 M3U8 URL（支持多种格式）
+     *
+     * @param string $content HTML/JSON 内容
+     * @return array M3U8 URL 列表
+     */
+    public static function extractAllM3u8Urls($content)
+    {
+        $urls = [];
+
+        $patterns = [
+            '/https?:\/\/[^\s"\'<>]+\.m3u8[^\s"\'<>]*/i',
+            '/\/\/[^\s"\'<>]+\.m3u8[^\s"\'<>]*/i',
+            '/["\']([^\s"\'<>]+\.m3u8[^\s"\'<>]*)["\']/i',
+            '/["\']url["\']\s*:\s*["\']([^\s"\']+\.m3u8[^\s"\']*)["\']/i',
+            '/["\']video_url["\']\s*:\s*["\']([^\s"\']+\.m3u8[^\s"\']*)["\']/i',
+            '/["\']play_url["\']\s*:\s*["\']([^\s"\']+\.m3u8[^\s"\']*)["\']/i',
+            '/["\']src["\']\s*:\s*["\']([^\s"\']+\.m3u8[^\s"\']*)["\']/i',
+            '/["\']hls["\']\s*:\s*["\']([^\s"\']+\.m3u8[^\s"\']*)["\']/i',
+            '/["\']m3u8["\']\s*:\s*["\']([^\s"\']+\.m3u8[^\s"\']*)["\']/i',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match_all($pattern, $content, $matches)) {
+                foreach ($matches[0] as $match) {
+                    $url = trim($match, '"\'');
+                    if (!empty($url)) {
+                        $urls[] = $url;
+                    }
+                }
+            }
+        }
+
+        return array_unique($urls);
+    }
+
+    /**
+     * 提取页面中的流媒体 URL（可能是加密的 m3u8）
+     *
+     * @param string $content HTML/JSON 内容
+     * @return array 流媒体 URL 列表
+     */
+    public static function extractStreamUrls($content)
+    {
+        $urls = [];
+
+        $patterns = [
+            '/["\']url["\']\s*:\s*["\']([^\s"\']+\.(?:ts|m3u8|mp4)[^\s"\']*)["\']/i',
+            '/["\']src["\']\s*:\s*["\']([^\s"\']+\.(?:ts|m3u8|mp4)[^\s"\']*)["\']/i',
+            '/data-url=["\']([^\s"\']+\.(?:ts|m3u8)[^\s"\']*)["\']/i',
+            '/data-src=["\']([^\s"\']+\.(?:ts|m3u8)[^\s"\']*)["\']/i',
+            '/<source[^>]+src=["\']([^\s"\']+\.(?:ts|m3u8)[^\s"\']*)["\']/i',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match_all($pattern, $content, $matches)) {
+                foreach ($matches[1] as $match) {
+                    $url = trim($match, '"\'');
+                    if (!empty($url)) {
+                        $urls[] = $url;
+                    }
+                }
+            }
+        }
+
+        return array_unique($urls);
+    }
+
+    /**
+     * 递归解析 Master Playlist，获取真正的 Media Playlist（包含 TS 片段）
+     *
+     * @param string $baseUrl 基础 URL
+     * @param array $m3u8Result ['content' => string, 'http_code' => int]
+     * @return array|false 解析后的 Media Playlist 或 false
+     */
+    public static function resolveMasterPlaylist($baseUrl, $m3u8Result)
+    {
+        if (!isset($m3u8Result['content'])) return false;
+
+        $cleaner = new self();
+        $parsed = $cleaner->parseM3U8($m3u8Result['content']);
+
+        if (!$parsed['is_master'] || empty($parsed['master_variants'])) {
+            return false;
+        }
+
+        $bestVariant = null;
+        $bestBandwidth = 0;
+
+        foreach ($parsed['master_variants'] as $variant) {
+            $bandwidth = 0;
+            if (preg_match('/BANDWIDTH=(\d+)/', $variant['stream_inf'], $m)) {
+                $bandwidth = (int)$m[1];
+            }
+
+            if ($bandwidth > $bestBandwidth) {
+                $bestBandwidth = $bandwidth;
+                $bestVariant = $variant;
+            }
+        }
+
+        if ($bestVariant === null) {
+            $bestVariant = $parsed['master_variants'][0];
+        }
+
+        $subUrl = self::resolveUrl($baseUrl, $bestVariant['uri']);
+
+        $subResult = self::downloadM3U8Ex($subUrl);
+        if ($subResult) {
+            $subResult['final_url'] = $subUrl;
+            $subResult['master_url'] = $baseUrl;
+            return $subResult;
         }
 
         return false;
