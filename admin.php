@@ -708,12 +708,15 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 'code' => 200,
                 'success' => true,
                 'm3u8_url' => $finalM3u8Url,
+                'm3u8_content' => $m3u8Content,
                 'cache_key' => $cacheKey,
                 'segment_count' => $segmentCount,
                 'total_duration' => round($totalDuration, 1),
                 'is_master' => $isMaster,
                 'master_variants' => $parsed['master_variants'] ?? [],
                 'has_end' => $parsed['has_end'],
+                'discontinuity_count' => $parsed['discontinuity_count'] ?? 0,
+                'discontinuity_indices' => $parsed['discontinuity_indices'] ?? [],
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -1006,6 +1009,7 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             $clusterResult = $md5->deepClusterAnalyze($allSegments, $totalSegments);
 
             $cleanM3u8 = '';
+            $deepAnalysis = null;
             if (!empty($m3u8Content) && !empty($m3u8Url)) {
                 $adIndexes = [];
                 foreach ($clusterResult['refined_segments'] as $seg) {
@@ -1014,6 +1018,8 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                     }
                 }
                 $cleanM3u8 = $md5->buildCleanM3U8ByIndex($m3u8Content, $m3u8Url, $adIndexes);
+
+                $deepAnalysis = $md5->deepAnalysisWithCommercials($m3u8Content, $m3u8Url, $clusterResult['refined_segments']);
             }
 
             echo json_encode([
@@ -1025,6 +1031,7 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 'ad_duration' => $clusterResult['ad_duration'],
                 'total_duration' => $clusterResult['total_duration'],
                 'clean_m3u8' => $cleanM3u8,
+                'deep_analysis' => $deepAnalysis,
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -2139,6 +2146,35 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <div class="panel" style="border:1px solid #e5e7eb;margin-top:12px">
                     <h4 style="margin-top:0;color:#059669">✅ 正片片段（保留）</h4>
                     <div id="deep_content_segments" style="max-height:300px;overflow-y:auto"></div>
+                </div>
+                <!-- 广告与插播合并分析 -->
+                <div id="deep_commercial_panel" class="panel" style="border:2px solid #f97316;margin-top:12px;background:#fff7ed;display:none">
+                    <h4 style="margin-top:0;color:#ea580c">📺 广告与插播合并分析</h4>
+                    <div id="deep_commercial_stats" style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin-bottom:12px"></div>
+                    <div id="deep_commercial_breaks" style="max-height:250px;overflow-y:auto"></div>
+                </div>
+                <!-- TS 特征码（二次开发用） -->
+                <div id="deep_signature_panel" class="panel" style="border:2px solid #8b5cf6;margin-top:12px;background:#faf5ff;display:none">
+                    <h4 style="margin-top:0;color:#7c3aed">🔖 TS 特征码（二次开发用）</h4>
+                    <p style="font-size:12px;color:#6b7280;margin:4px 0 12px 0">提取广告片段的 MD5 指纹、大小分布、文件名模式等特征，可用于自定义广告识别规则。</p>
+                    <div id="deep_ad_signatures" style="max-height:200px;overflow-y:auto;margin-bottom:12px"></div>
+                    <div style="display:flex;gap:20px;flex-wrap:wrap">
+                        <div style="flex:1;min-width:200px">
+                            <b style="font-size:13px;color:#4b5563">📁 文件名模式 Top5</b>
+                            <div id="deep_filename_patterns" style="font-size:12px;margin-top:6px;font-family:monospace"></div>
+                        </div>
+                        <div style="flex:1;min-width:200px">
+                            <b style="font-size:13px;color:#4b5563">🔢 MD5 前缀分布 Top5</b>
+                            <div id="deep_md5_prefixes" style="font-size:12px;margin-top:6px;font-family:monospace"></div>
+                        </div>
+                        <div style="flex:1;min-width:200px">
+                            <b style="font-size:13px;color:#4b5563">📊 大小分布 (KB)</b>
+                            <div id="deep_size_distribution" style="font-size:12px;margin-top:6px;font-family:monospace"></div>
+                        </div>
+                    </div>
+                    <div style="margin-top:12px;text-align:right">
+                        <button onclick="exportAdSignatures()" style="padding:6px 14px;font-size:12px;background:#8b5cf6;color:white;border:none;border-radius:4px;cursor:pointer">📥 导出广告特征码 JSON</button>
+                    </div>
                 </div>
                 <div class="panel" style="border:1px solid #4f46e5;margin-top:12px;background:#f0f9ff">
                     <h4 style="margin-top:0;color:#4f46e5">🔗 去广告后的 M3U8 链接（完整域名）</h4>
@@ -5944,6 +5980,9 @@ var _deepM3u8Url = '';
 var _deepM3u8Content = '';
 var _deepDomain = '';
 var _deepTotal = 0;
+var _deepDiscontinuityCount = 0;
+var _deepDiscontinuityIndices = [];
+var _deepAnalysisResult = null;
 
 function md5DeepAnalyze() {
     if (_deepAnalyzeRunning) return;
@@ -6018,7 +6057,10 @@ function deepParseM3U8(videoUrl, m3u8Url, scanMode) {
 
             _deepCacheKey = data.cache_key || '';
             _deepM3u8Url = data.m3u8_url || '';
+            _deepM3u8Content = data.m3u8_content || '';
             _deepTotal = data.segment_count || 0;
+            _deepDiscontinuityCount = data.discontinuity_count || 0;
+            _deepDiscontinuityIndices = data.discontinuity_indices || [];
 
             var btn = document.getElementById('deep_analyze_btn');
             btn.textContent = '⏳ 分析中... (0/' + _deepTotal + ')';
@@ -6270,6 +6312,7 @@ function runDeepClusterAnalysis() {
             }
 
             _deepAllSegments = data.refined_segments || _deepAllSegments;
+            _deepAnalysisResult = data.deep_analysis || null;
 
             if (data.clean_m3u8) {
                 document.getElementById('deep_clean_m3u8').value = data.clean_m3u8;
@@ -6290,6 +6333,11 @@ function runDeepClusterAnalysis() {
                 clusterSummaryDiv.innerHTML = clusterHtml;
             }
 
+            if (data.deep_analysis) {
+                renderCommercialPanel(data.deep_analysis);
+                renderSignaturePanel(data.deep_analysis);
+            }
+
             updateDeepResultDisplay(false, _deepTotal);
         })
         .catch(function(e) {
@@ -6299,6 +6347,164 @@ function runDeepClusterAnalysis() {
                 clusterStatusDiv.style.color = '#d97706';
             }
         });
+}
+
+function renderCommercialPanel(deepAnalysis) {
+    var panel = document.getElementById('deep_commercial_panel');
+    if (!panel) return;
+    panel.style.display = 'block';
+
+    var statsDiv = document.getElementById('deep_commercial_stats');
+    var breaksDiv = document.getElementById('deep_commercial_breaks');
+
+    var commercialBreaks = deepAnalysis.commercial_breaks || [];
+    var discontinuityBreaks = deepAnalysis.discontinuity_breaks || [];
+    var adCount = deepAnalysis.ad_count || 0;
+    var adDuration = deepAnalysis.ad_duration || 0;
+    var adPercentage = deepAnalysis.ad_percentage || 0;
+
+    var adSuspectedDiscontinuities = discontinuityBreaks.filter(function(d) { return d.has_ad_suspected; }).length;
+
+    statsDiv.innerHTML = ''
+        + '<div style="padding:6px 12px;background:#fee2e2;border-radius:6px;color:#dc2626"><b>广告片段：</b>' + adCount + ' 段 (' + adDuration.toFixed(1) + 's)</div>'
+        + '<div style="padding:6px 12px;background:#fed7aa;border-radius:6px;color:#ea580c"><b>广告插播段：</b>' + commercialBreaks.length + ' 个</div>'
+        + '<div style="padding:6px 12px;background:#fde68a;border-radius:6px;color:#b45309"><b>DISCONTINUITY：</b>' + discontinuityBreaks.length + ' 个</div>'
+        + '<div style="padding:6px 12px;background:#fecaca;border-radius:6px;color:#991b1b"><b>疑似广告插播：</b>' + adSuspectedDiscontinuities + ' 个</div>'
+        + '<div style="padding:6px 12px;background:#f3f4f6;border-radius:6px;color:#4b5563"><b>广告占比：</b>' + adPercentage + '%</div>';
+
+    var html = '';
+
+    if (commercialBreaks.length > 0) {
+        html += '<div style="margin-bottom:12px"><b style="color:#dc2626;font-size:13px">🚫 广告插播段列表：</b>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">';
+        html += '<tr style="background:#f3f4f6"><th style="padding:5px 8px;text-align:left">#</th><th style="padding:5px 8px;text-align:left">起始段</th><th style="padding:5px 8px;text-align:left">结束段</th><th style="padding:5px 8px;text-align:left">片段数</th><th style="padding:5px 8px;text-align:left">时长</th></tr>';
+        commercialBreaks.forEach(function(c, i) {
+            html += '<tr style="border-bottom:1px solid #fecaca">'
+                + '<td style="padding:5px 8px">' + (i+1) + '</td>'
+                + '<td style="padding:5px 8px">' + c.start + '</td>'
+                + '<td style="padding:5px 8px">' + c.end + '</td>'
+                + '<td style="padding:5px 8px">' + c.count + '</td>'
+                + '<td style="padding:5px 8px">' + (c.total_duration || 0).toFixed(1) + 's</td>'
+                + '</tr>';
+        });
+        html += '</table></div>';
+    }
+
+    if (discontinuityBreaks.length > 0) {
+        html += '<div><b style="color:#b45309;font-size:13px">📍 DISCONTINUITY 插播点：</b>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">';
+        html += '<tr style="background:#f3f4f6"><th style="padding:5px 8px;text-align:left">#</th><th style="padding:5px 8px;text-align:left">位置段号</th><th style="padding:5px 8px;text-align:left">类型</th></tr>';
+        discontinuityBreaks.forEach(function(d, i) {
+            var typeClass = d.has_ad_suspected ? 'color:#dc2626' : 'color:#6b7280';
+            var typeLabel = d.has_ad_suspected ? '⚠️ 疑似广告插播' : '🔄 场景切换';
+            html += '<tr style="border-bottom:1px solid #e5e7eb">'
+                + '<td style="padding:5px 8px">' + (i+1) + '</td>'
+                + '<td style="padding:5px 8px;font-family:monospace">' + d.segment_index + '</td>'
+                + '<td style="padding:5px 8px;' + typeClass + '">' + typeLabel + '</td>'
+                + '</tr>';
+        });
+        html += '</table></div>';
+    }
+
+    if (commercialBreaks.length === 0 && discontinuityBreaks.length === 0) {
+        html = '<div style="color:#6b7280;font-size:13px;padding:10px;text-align:center">未检测到广告插播或 DISCONTINUITY 切换点</div>';
+    }
+
+    breaksDiv.innerHTML = html;
+}
+
+function renderSignaturePanel(deepAnalysis) {
+    var panel = document.getElementById('deep_signature_panel');
+    if (!panel) return;
+    panel.style.display = 'block';
+
+    var adSigs = deepAnalysis.ad_signatures || [];
+    var signatures = deepAnalysis.signatures || {};
+
+    var adSigDiv = document.getElementById('deep_ad_signatures');
+    if (adSigs.length === 0) {
+        adSigDiv.innerHTML = '<div style="color:#6b7280;font-size:12px;padding:8px;text-align:center">暂无已识别的广告特征码（需要更多样本分析）</div>';
+    } else {
+        var html = '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+        html += '<tr style="background:#f3f4f6"><th style="padding:4px 6px;text-align:left">#</th><th style="padding:4px 6px;text-align:left">MD5 特征码</th><th style="padding:4px 6px;text-align:left">大小</th><th style="padding:4px 6px;text-align:left">时长</th><th style="padding:4px 6px;text-align:left">识别原因</th></tr>';
+        adSigs.forEach(function(s, i) {
+            var sizeStr = s.size ? (s.size > 1024 ? (s.size/1024).toFixed(1) + 'KB' : s.size + 'B') : '-';
+            html += '<tr style="border-bottom:1px solid #e9d5ff">'
+                + '<td style="padding:4px 6px">' + (i+1) + '</td>'
+                + '<td style="padding:4px 6px;font-family:monospace;color:#7c3aed;word-break:break-all">' + s.md5 + '</td>'
+                + '<td style="padding:4px 6px">' + sizeStr + '</td>'
+                + '<td style="padding:4px 6px">' + (s.duration || 0).toFixed(2) + 's</td>'
+                + '<td style="padding:4px 6px;color:#6b7280">' + (s.reason || '') + '</td>'
+                + '</tr>';
+        });
+        html += '</table>';
+        adSigDiv.innerHTML = html;
+    }
+
+    var fnDiv = document.getElementById('deep_filename_patterns');
+    if (signatures.filename_patterns && Object.keys(signatures.filename_patterns).length > 0) {
+        var fnHtml = '';
+        var count = 0;
+        for (var prefix in signatures.filename_patterns) {
+            if (count >= 5) break;
+            fnHtml += '<div style="padding:2px 0"><span style="color:#7c3aed">' + prefix + '</span> : ' + signatures.filename_patterns[prefix] + ' 段</div>';
+            count++;
+        }
+        fnDiv.innerHTML = fnHtml;
+    }
+
+    var md5Div = document.getElementById('deep_md5_prefixes');
+    if (signatures.md5_prefixes && Object.keys(signatures.md5_prefixes).length > 0) {
+        var md5Html = '';
+        var count = 0;
+        for (var pfx in signatures.md5_prefixes) {
+            if (count >= 5) break;
+            md5Html += '<div style="padding:2px 0"><span style="color:#7c3aed">' + pfx + '...</span> : ' + signatures.md5_prefixes[pfx] + ' 段</div>';
+            count++;
+        }
+        md5Div.innerHTML = md5Html;
+    }
+
+    var sizeDiv = document.getElementById('deep_size_distribution');
+    if (signatures.size_distribution && Object.keys(signatures.size_distribution).length > 0) {
+        var sizeHtml = '';
+        var count = 0;
+        for (var bucket in signatures.size_distribution) {
+            if (count >= 5) break;
+            sizeHtml += '<div style="padding:2px 0"><span style="color:#7c3aed">' + bucket + '-' + (parseInt(bucket)+100) + 'KB</span> : ' + signatures.size_distribution[bucket] + ' 段</div>';
+            count++;
+        }
+        sizeDiv.innerHTML = sizeHtml;
+    }
+}
+
+function exportAdSignatures() {
+    if (!_deepAnalysisResult || !_deepAnalysisResult.ad_signatures) {
+        alert('暂无广告特征码数据');
+        return;
+    }
+
+    var exportData = {
+        export_time: new Date().toISOString(),
+        source_url: _deepM3u8Url,
+        total_segments: _deepAnalysisResult.total_segments,
+        ad_count: _deepAnalysisResult.ad_count,
+        ad_duration: _deepAnalysisResult.ad_duration,
+        ad_signatures: _deepAnalysisResult.ad_signatures,
+        commercial_breaks: _deepAnalysisResult.commercial_breaks,
+        signatures: _deepAnalysisResult.signatures,
+    };
+
+    var jsonStr = JSON.stringify(exportData, null, 2);
+    var blob = new Blob([jsonStr], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'ad_signatures_' + Date.now() + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 function manualMarkSeg(md5, isAd, index) {

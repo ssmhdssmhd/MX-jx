@@ -185,6 +185,9 @@ class MD5PatternCleaner
         $isMaster = false;
         $masterVariants = [];
         $currentVariant = [];
+        $discontinuityCount = 0;
+        $discontinuityIndices = [];
+        $currentDiscontinuity = 0;
 
         foreach ($lines as $i => $line) {
             $line = trim($line);
@@ -192,6 +195,13 @@ class MD5PatternCleaner
 
             if ($line === '#EXT-X-ENDLIST') {
                 $hasEnd = true;
+                continue;
+            }
+
+            if ($line === '#EXT-X-DISCONTINUITY') {
+                $discontinuityCount++;
+                $discontinuityIndices[] = count($segments);
+                $currentDiscontinuity = $discontinuityCount;
                 continue;
             }
 
@@ -223,6 +233,7 @@ class MD5PatternCleaner
                     'uri' => $line,
                     'duration' => $currentDuration,
                     'index' => count($segments),
+                    'discontinuity_group' => $currentDiscontinuity,
                 ];
             }
         }
@@ -233,6 +244,8 @@ class MD5PatternCleaner
             'has_end' => $hasEnd,
             'is_master' => $isMaster,
             'master_variants' => $masterVariants,
+            'discontinuity_count' => $discontinuityCount,
+            'discontinuity_indices' => $discontinuityIndices,
         ];
     }
 
@@ -987,18 +1000,69 @@ class MD5PatternCleaner
      */
     public function buildCleanM3U8ByIndex($m3u8Content, $videoUrl, $adIndexes)
     {
-        $parsed = $this->parseM3U8($m3u8Content);
-        $segments = $parsed['segments'];
-        $cleanSegments = [];
+        $lines = explode("\n", $m3u8Content);
+        $outputLines = [];
+        $currentDuration = 0;
+        $segmentIndex = 0;
+        $skipNextSegment = false;
 
-        foreach ($segments as $idx => $seg) {
-            if (!empty($adIndexes[$idx])) {
+        $headerDone = false;
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '') continue;
+
+            if (strpos($line, '#EXT-X-STREAM-INF:') === 0) {
+                return $m3u8Content;
+            }
+
+            if ($line === '#EXTM3U' || $line === '#EXT-X-VERSION:3'
+                || strpos($line, '#EXT-X-TARGETDURATION:') === 0
+                || strpos($line, '#EXT-X-MEDIA-SEQUENCE:') === 0
+                || strpos($line, '#EXT-X-PLAYLIST-TYPE:') === 0
+                || strpos($line, '#EXT-X-KEY:') === 0
+                || strpos($line, '#EXT-X-MAP:') === 0) {
+                $outputLines[] = $line;
                 continue;
             }
-            $cleanSegments[] = $seg;
+
+            if ($line === '#EXT-X-ENDLIST') {
+                $outputLines[] = $line;
+                continue;
+            }
+
+            if ($line === '#EXT-X-DISCONTINUITY') {
+                $outputLines[] = $line;
+                continue;
+            }
+
+            if (strpos($line, '#EXTINF:') === 0) {
+                if (preg_match('/#EXTINF:([\d.]+)/', $line, $m)) {
+                    $currentDuration = (float)$m[1];
+                }
+                $skipNextSegment = isset($adIndexes[$segmentIndex]);
+                if (!$skipNextSegment) {
+                    $outputLines[] = $line;
+                }
+                continue;
+            }
+
+            if (strpos($line, '#') !== 0 && $line !== '') {
+                if (!$skipNextSegment) {
+                    $fullUrl = $this->resolveUrl($videoUrl, $line);
+                    $outputLines[] = $fullUrl;
+                }
+                $segmentIndex++;
+                $skipNextSegment = false;
+                continue;
+            }
+
+            if (strpos($line, '#') === 0 && !$skipNextSegment) {
+                $outputLines[] = $line;
+            }
         }
 
-        return $this->buildOutputM3U8FullUrl($parsed['header'], $cleanSegments, $videoUrl, $parsed['has_end']);
+        return implode("\n", $outputLines) . "\n";
     }
 
     /**
@@ -1643,5 +1707,194 @@ class MD5PatternCleaner
             }
         }
         return null;
+    }
+
+    /**
+     * 提取 TS 片段特征码（用于二次开发和模式识别）
+     * 包含：文件名模式、MD5前缀、大小分布、时长特征等
+     */
+    public function extractSegmentSignatures($segments, $segmentResults = [])
+    {
+        $signatures = [
+            'filename_patterns' => [],
+            'md5_prefixes' => [],
+            'size_distribution' => [],
+            'duration_patterns' => [],
+            'ad_signatures' => [],
+            'content_signatures' => [],
+        ];
+
+        $filenamePrefixes = [];
+        $md5PrefixCounts = [];
+        $sizeBuckets = [];
+        $adMd5List = [];
+        $contentMd5List = [];
+
+        foreach ($segments as $idx => $seg) {
+            $uri = $seg['uri'] ?? '';
+            $basename = basename($uri);
+
+            $prefix = '';
+            if (preg_match('/^([a-zA-Z0-9]+)/', $basename, $m)) {
+                $prefix = $m[1];
+            }
+            if ($prefix) {
+                if (!isset($filenamePrefixes[$prefix])) $filenamePrefixes[$prefix] = 0;
+                $filenamePrefixes[$prefix]++;
+            }
+
+            $r = $segmentResults[$idx] ?? null;
+            if ($r && !empty($r['md5'])) {
+                $md5 = $r['md5'];
+                $md5Prefix = substr($md5, 0, 4);
+                if (!isset($md5PrefixCounts[$md5Prefix])) $md5PrefixCounts[$md5Prefix] = 0;
+                $md5PrefixCounts[$md5Prefix]++;
+
+                $sizeKB = round(($r['size'] ?? 0) / 1024, 0);
+                $sizeBucket = floor($sizeKB / 100) * 100;
+                if (!isset($sizeBuckets[$sizeBucket])) $sizeBuckets[$sizeBucket] = 0;
+                $sizeBuckets[$sizeBucket]++;
+            }
+        }
+
+        arsort($filenamePrefixes);
+        arsort($md5PrefixCounts);
+        ksort($sizeBuckets);
+
+        $signatures['filename_patterns'] = array_slice($filenamePrefixes, 0, 10, true);
+        $signatures['md5_prefixes'] = array_slice($md5PrefixCounts, 0, 10, true);
+        $signatures['size_distribution'] = $sizeBuckets;
+
+        return $signatures;
+    }
+
+    /**
+     * 深度分析：合并广告和插播信息，生成完整分析报告
+     */
+    public function deepAnalysisWithCommercials($m3u8Content, $videoUrl, $analyzedSegments = [])
+    {
+        $parsed = $this->parseM3U8($m3u8Content);
+        $segments = $parsed['segments'];
+        $totalSegments = count($segments);
+        $discontinuityIndices = $parsed['discontinuity_indices'] ?? [];
+
+        $commercialBreaks = [];
+        $adSegments = [];
+        $contentSegments = [];
+
+        $allAnalyzed = [];
+        foreach ($analyzedSegments as $s) {
+            $allAnalyzed[$s['index']] = $s;
+        }
+
+        foreach ($segments as $idx => $seg) {
+            $segInfo = $allAnalyzed[$idx] ?? [
+                'index' => $idx,
+                'duration' => $seg['duration'],
+                'uri' => $seg['uri'],
+                'is_ad' => false,
+                'reason' => '未分析',
+                'md5' => '',
+                'size' => 0,
+            ];
+            $segInfo['discontinuity_group'] = $seg['discontinuity_group'] ?? 0;
+
+            if (!empty($segInfo['is_ad'])) {
+                $adSegments[] = $segInfo;
+            } else {
+                $contentSegments[] = $segInfo;
+            }
+        }
+
+        $adIndexMap = [];
+        foreach ($adSegments as $s) {
+            $adIndexMap[$s['index']] = true;
+        }
+
+        if (!empty($adSegments)) {
+            usort($adSegments, function($a, $b) { return $a['index'] - $b['index']; });
+
+            $currentCluster = null;
+            foreach ($adSegments as $s) {
+                $idx = $s['index'];
+                if ($currentCluster === null || $idx - $currentCluster['end'] > 2) {
+                    if ($currentCluster !== null) {
+                        $commercialBreaks[] = $currentCluster;
+                    }
+                    $currentCluster = [
+                        'start' => $idx,
+                        'end' => $idx,
+                        'count' => 1,
+                        'total_duration' => $s['duration'] ?? 0,
+                        'segments' => [$s],
+                    ];
+                } else {
+                    $currentCluster['end'] = $idx;
+                    $currentCluster['count']++;
+                    $currentCluster['total_duration'] += ($s['duration'] ?? 0);
+                    $currentCluster['segments'][] = $s;
+                }
+            }
+            if ($currentCluster !== null) {
+                $commercialBreaks[] = $currentCluster;
+            }
+        }
+
+        $discontinuityBreaks = [];
+        foreach ($discontinuityIndices as $dIdx) {
+            $hasAd = false;
+            for ($i = max(0, $dIdx - 5); $i < min($totalSegments, $dIdx + 10); $i++) {
+                if (isset($adIndexMap[$i])) {
+                    $hasAd = true;
+                    break;
+                }
+            }
+            $discontinuityBreaks[] = [
+                'segment_index' => $dIdx,
+                'has_ad_suspected' => $hasAd,
+                'description' => $hasAd ? '疑似广告插播点' : '普通场景切换点',
+            ];
+        }
+
+        $adSignatures = [];
+        foreach ($adSegments as $s) {
+            if (!empty($s['md5'])) {
+                $adSignatures[] = [
+                    'md5' => $s['md5'],
+                    'size' => $s['size'] ?? 0,
+                    'duration' => $s['duration'] ?? 0,
+                    'reason' => $s['reason'] ?? '',
+                    'index' => $s['index'],
+                ];
+            }
+        }
+
+        $signatures = $this->extractSegmentSignatures($segments, $allAnalyzed);
+
+        $totalDuration = 0;
+        foreach ($segments as $s) {
+            $totalDuration += $s['duration'];
+        }
+        $adDuration = 0;
+        foreach ($adSegments as $s) {
+            $adDuration += $s['duration'] ?? 0;
+        }
+
+        return [
+            'total_segments' => $totalSegments,
+            'total_duration' => round($totalDuration, 1),
+            'ad_segments' => $adSegments,
+            'content_segments' => $contentSegments,
+            'ad_count' => count($adSegments),
+            'ad_duration' => round($adDuration, 1),
+            'ad_percentage' => $totalDuration > 0 ? round($adDuration / $totalDuration * 100, 1) : 0,
+            'commercial_breaks' => $commercialBreaks,
+            'commercial_break_count' => count($commercialBreaks),
+            'discontinuity_breaks' => $discontinuityBreaks,
+            'discontinuity_count' => count($discontinuityBreaks),
+            'ad_signatures' => $adSignatures,
+            'ad_signature_count' => count($adSignatures),
+            'signatures' => $signatures,
+        ];
     }
 }
