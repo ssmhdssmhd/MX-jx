@@ -548,7 +548,10 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         exit;
     } elseif ($ajaxEarlyAction === 'ajax_md5_test' || $ajaxEarlyAction === 'ajax_md5_stats'
         || $ajaxEarlyAction === 'ajax_md5_mark' || $ajaxEarlyAction === 'ajax_md5_whitelist'
-        || $ajaxEarlyAction === 'ajax_md5_deep_analyze') {
+        || $ajaxEarlyAction === 'ajax_md5_deep_analyze'
+        || $ajaxEarlyAction === 'ajax_md5_diagnose'
+        || $ajaxEarlyAction === 'ajax_md5_fetch_segment'
+        || $ajaxEarlyAction === 'ajax_md5_manual_mark') {
         // === MD5 指纹去广告：测试 / 统计 / 标记 ===
         require_once __DIR__ . '/algorithms/md5_pattern_cleaner.php';
         $md5 = new MD5PatternCleaner();
@@ -6055,7 +6058,15 @@ function diagM3u8() {
     formData.append('url', url);
 
     fetch(window.location.href, { method: 'POST', body: formData })
-        .then(function(r) { return r.json(); })
+        .then(function(r) {
+            var ct = r.headers.get('content-type') || '';
+            if (ct.indexOf('application/json') === -1) {
+                return r.text().then(function(t) {
+                    throw new Error('服务器返回非JSON内容：' + (t.substring(0, 80) || '空'));
+                });
+            }
+            return r.json();
+        })
         .then(function(data) {
             if (data.code !== 200) {
                 resultDiv.innerHTML = '<div style="padding:8px;color:#dc2626">❌ 解析失败：' + (data.error || '未知错误') + '</div>';
@@ -6130,7 +6141,15 @@ function diagFetchSegment() {
     formData.append('segment_uri', seg.uri);
 
     fetch(window.location.href, { method: 'POST', body: formData })
-        .then(function(r) { return r.json(); })
+        .then(function(r) {
+            var ct = r.headers.get('content-type') || '';
+            if (ct.indexOf('application/json') === -1) {
+                return r.text().then(function(t) {
+                    throw new Error('服务器返回非JSON内容：' + (t.substring(0, 80) || '空'));
+                });
+            }
+            return r.json();
+        })
         .then(function(data) {
             if (data.code !== 200) {
                 resultDiv.innerHTML = '<div style="padding:8px;color:#dc2626">❌ 下载失败：' + (data.error || '未知错误') + '</div>';
@@ -6205,7 +6224,15 @@ function diagManualMark() {
     formData.append('reason', reason);
 
     fetch(window.location.href, { method: 'POST', body: formData })
-        .then(function(r) { return r.json(); })
+        .then(function(r) {
+            var ct = r.headers.get('content-type') || '';
+            if (ct.indexOf('application/json') === -1) {
+                return r.text().then(function(t) {
+                    throw new Error('服务器返回非JSON内容：' + (t.substring(0, 80) || '空'));
+                });
+            }
+            return r.json();
+        })
         .then(function(data) {
             if (data.code === 200) {
                 var tag = isAd ? '🚫 已标记为广告' : '✅ 已标记为正片';
