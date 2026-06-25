@@ -2,15 +2,15 @@
 /** NoAd 去广告系统 v4 配置文件 */
 
 return array(
-    'noad_enabled' => true,
-    'debug_mode' => true,
-    'enable_ad_filter' => true,
+    'noad_enabled' => false,
+    'debug_mode' => false,
+    'enable_ad_filter' => false,
     'enable_ts_proxy' => true,
     'ad_keyword_threshold' => 2,
-    'cache_enabled' => true,
+    'cache_enabled' => false,
     'cache_ttl' => 1800,
     'cache_dir' => __DIR__ . '/../cache',
-    'enable_multi_source' => true,
+    'enable_multi_source' => false,
     'max_source_try' => 3,
     'request_timeout' => 10,
     'ad_keywords' => array (
@@ -530,7 +530,7 @@ return array(
     'enabled' => true,
   ),
 ),
-    'stats_enabled' => true,
+    'stats_enabled' => false,
     'stats_log_request' => true,
     'stats_top_limit' => 20,
     'sqlite_path' => __DIR__ . '/../cache/noad.db',
@@ -538,7 +538,7 @@ return array(
     // 算法开关：true=启用 false=关闭（关闭后完全跳过如意算法，仅使用其他广告过滤）
     'ruyi_enabled' => false,
     // Score 阈值：分数 >=此值的片段簇被视为广告。推荐值：3=保守, 4=平衡(默认), 5=激进
-    'ruyi_score_threshold' => 3,
+    'ruyi_score_threshold' => 4,
     // 基准片段时长（秒）：资源站标准视频片段时长。其他时长被视为候选广告片段
     'ruyi_baseline_sec' => 4,
     // 基准容差（秒）：基准 ±此值范围内都视为正常视频片段。默认 0.10
@@ -546,7 +546,7 @@ return array(
     // 广告簇最小长度：连续非基准时长片段数量 >=此值才视为候选广告（太短=可能是正常场景切换）
     'ruyi_min_cluster_len' => 3,
     // 广告簇最大长度：超过此长度视为正常内容（如纪录片的复杂片段），默认 15
-    'ruyi_max_cluster_len' => 12,
+    'ruyi_max_cluster_len' => 15,
     // 广告簇最小总时长（秒）：片段组总时长 >=此值才是完整广告块，默认 15
     'ruyi_min_cluster_sum' => 15,
     // 广告簇最大总时长（秒）：超过此值的长片段组=正片内容，默认 35
@@ -569,17 +569,17 @@ return array(
     'ruyi_debug_mode' => false,
     // ========================================================
     // ===== MD5 指纹去广告参数（万能规则1） =================
-    'md5_enabled' => false,
+    'md5_enabled' => true,
     'md5_repeat_threshold' => 3,
     'md5_max_concurrency' => 6,
     'md5_segment_timeout' => 15,
     'md5_total_timeout' => 60,
     'md5_max_segment_kb' => 5000,
-    'md5_use_proxy' => false,
+    'md5_use_proxy' => true,
     'md5_min_interval_ms' => 100,
-    'md5_auto_learn' => false,
-    'md5_db_cleanup_days' => 30,
-    'md5_debug' => false,
+    'md5_auto_learn' => true,
+    'md5_db_cleanup_days' => 14,
+    'md5_debug' => true,
     // ========================================================
     // ===== 批量解析特征学习参数（万能规则2） =================
     'feat_enabled' => true,

@@ -1,6 +1,6 @@
 <?php
 /**
- * 沫兮万能解析 - 管理后台（单文件集成版 v4.5.1）
+ * 沫兮万能解析 - 管理后台（单文件集成版 v4.5.2）
  * ------------------------------------------------------------
  * 原文件：admin.php + admin_tpl.php + admin_main.php + admin_style.css
  * 现全部整合到此文件中，便于部署与维护
@@ -190,6 +190,7 @@ function buildNoadConfig($c) {
             "    'md5_enabled' => " . (isset($c['md5_enabled']) && !$c['md5_enabled'] ? 'false' : 'true') . ",\n" .
             "    'md5_repeat_threshold' => " . max(1, (int)($c['md5_repeat_threshold'] ?? 3)) . ",\n" .
             "    'md5_max_concurrency' => " . max(1, (int)($c['md5_max_concurrency'] ?? 6)) . ",\n" .
+            "    'md5_num_processes' => " . (int)($c['md5_num_processes'] ?? 4) . ",\n" .
             "    'md5_segment_timeout' => " . max(5, (int)($c['md5_segment_timeout'] ?? 15)) . ",\n" .
             "    'md5_total_timeout' => " . max(30, (int)($c['md5_total_timeout'] ?? 60)) . ",\n" .
             "    'md5_max_segment_kb' => " . max(500, (int)($c['md5_max_segment_kb'] ?? 5000)) . ",\n" .
@@ -1438,6 +1439,7 @@ elseif ($action === 'save_noad_config') {
     $newCfg['md5_enabled'] = isset($_POST['md5_enabled']);
     $newCfg['md5_repeat_threshold'] = max(1, min(20, (int)($_POST['md5_repeat_threshold'] ?? 3)));
     $newCfg['md5_max_concurrency'] = max(1, min(20, (int)($_POST['md5_max_concurrency'] ?? 6)));
+    $newCfg['md5_num_processes'] = max(-1, min(16, (int)($_POST['md5_num_processes'] ?? 4)));
     $newCfg['md5_segment_timeout'] = max(5, min(120, (int)($_POST['md5_segment_timeout'] ?? 15)));
     $newCfg['md5_total_timeout'] = max(30, min(600, (int)($_POST['md5_total_timeout'] ?? 60)));
     $newCfg['md5_max_segment_kb'] = max(500, min(50000, (int)($_POST['md5_max_segment_kb'] ?? 5000)));
@@ -1545,7 +1547,7 @@ function renderLoginPage($loginError = '') {
     <div class="login-box">
         <div class="login-icon">🎬</div>
         <h1>沫兮万能解析管理后台</h1>
-        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.5.1</div>
+        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.5.2</div>
         <?php if (!empty($loginError)): ?><div class="err"><?php echo htmlspecialchars($loginError); ?></div><?php endif; ?>
         <form method="post">
             <input type="hidden" name="action" value="login">
@@ -1813,7 +1815,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <header class="admin-header">
         <div>
             <h1>🎬 沫兮万能解析管理后台</h1>
-            <div class="sub">v4.5.1 · NoAd 去广告 + 智能线路切换（单文件版）</div>
+            <div class="sub">v4.5.2 · NoAd 去广告 + 智能线路切换（单文件版）</div>
         </div>
         <div style="display:flex;gap:12px;align-items:center;font-size:13px;flex-wrap:wrap">
             <span>NoAd <?php echo !empty($noadConfig['noad_enabled']) ? '<span class="badge badge-green">已启用</span>' : '<span class="badge badge-red">已关闭</span>'; ?></span>
@@ -2338,6 +2340,11 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 
                         <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
                             <h4 style="margin:0 0 12px 0;color:#444">🛡️ 服务器保护</h4>
+                            <div style="padding:4px 0;font-size:14px"><label>多进程数：
+                                <input type="number" name="md5_num_processes" min="-1" max="16" step="1"
+                                    value="<?php echo (int)($md5Config_ac['md5_num_processes'] ?? 4); ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                                <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">-1=禁用多进程·0=自动检测CPU·默认4（pcntl扩展可用时生效）</div>
+                            </div>
                             <div style="padding:4px 0;font-size:14px"><label>最大并发数：
                                 <input type="number" name="md5_max_concurrency" min="1" max="20" step="1"
                                     value="<?php echo (int)$md5Concur_ac; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>

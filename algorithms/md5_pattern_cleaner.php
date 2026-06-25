@@ -57,6 +57,9 @@ class MD5PatternCleaner
     /** @var int 最大并发下载数（会被动态调整） */
     private $maxConcurrency = 6;
 
+    /** @var int 多进程数（0=自动检测CPU核心数，-1=禁用多进程只用curl_multi） */
+    private $numProcesses = 4;
+
     /** @var int 单片段超时（秒） */
     private $segmentTimeout = 15;
 
@@ -104,6 +107,7 @@ class MD5PatternCleaner
                 $this->enabled = isset($config['md5_enabled']) ? (bool)$config['md5_enabled'] : true;
                 $this->md5RepeatThreshold = (int)($config['md5_repeat_threshold'] ?? 3);
                 $this->maxConcurrency = (int)($config['md5_max_concurrency'] ?? 6);
+                $this->numProcesses = isset($config['md5_num_processes']) ? (int)$config['md5_num_processes'] : 4;
                 $this->segmentTimeout = (int)($config['md5_segment_timeout'] ?? 15);
                 $this->totalTimeout = (int)($config['md5_total_timeout'] ?? 60);
                 $this->maxSegmentSizeKB = (int)($config['md5_max_segment_kb'] ?? 5000);
@@ -598,6 +602,196 @@ class MD5PatternCleaner
     }
 
     /**
+     * 多进程下载并计算 MD5（真正的多进程并行，比 curl_multi 更快）
+     * 使用 pcntl_fork + 临时文件通信
+     */
+    public function downloadSegmentsMultiProcess($segments, $videoUrl, $numProcesses = 4)
+    {
+        $results = [];
+
+        if (!function_exists('pcntl_fork') || !function_exists('posix_getpid')) {
+            // 降级到 curl_multi 并发
+            return $this->downloadSegmentsConcurrent($segments, $videoUrl, min($numProcesses * 3, 12));
+        }
+
+        if ($numProcesses < 1) $numProcesses = 1;
+        if ($numProcesses > 16) $numProcesses = 16;
+
+        $segmentList = [];
+        foreach ($segments as $idx => $seg) {
+            $segmentList[] = ['index' => $idx, 'seg' => $seg];
+        }
+        $total = count($segmentList);
+
+        if ($total === 0) {
+            return [];
+        }
+
+        // 单片段时直接串行，避免进程开销
+        if ($total <= 2) {
+            return $this->downloadSegmentsConcurrent($segments, $videoUrl, $total);
+        }
+
+        // 进程数不超过片段数
+        if ($numProcesses > $total) {
+            $numProcesses = $total;
+        }
+
+        // 分配任务：每个进程处理一组片段
+        $chunks = array_chunk($segmentList, (int)ceil($total / $numProcesses));
+        $tempDir = sys_get_temp_dir() . '/md5_mp_' . getmypid() . '_' . uniqid();
+        @mkdir($tempDir, 0700, true);
+
+        if (!is_dir($tempDir)) {
+            return $this->downloadSegmentsConcurrent($segments, $videoUrl, min($numProcesses * 3, 12));
+        }
+
+        $pids = [];
+        $resultFiles = [];
+
+        foreach ($chunks as $procId => $chunk) {
+            $resultFile = $tempDir . '/result_' . $procId . '.json';
+            $resultFiles[] = $resultFile;
+
+            $pid = pcntl_fork();
+
+            if ($pid == -1) {
+                // fork 失败，降级
+                foreach ($pids as $p) {
+                    pcntl_waitpid($p, $status);
+                }
+                $this->cleanupTempDir($tempDir);
+                return $this->downloadSegmentsConcurrent($segments, $videoUrl, min($numProcesses * 3, 12));
+            } elseif ($pid == 0) {
+                // 子进程：处理分配的片段
+                $childResults = [];
+                $maxBytes = $this->maxSegmentSizeKB * 1024;
+
+                foreach ($chunk as $item) {
+                    $idx = $item['index'];
+                    $seg = $item['seg'];
+                    $url = $this->resolveUrl($videoUrl, $seg['uri']);
+                    $startTime = microtime(true);
+
+                    $ch = curl_init($url);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_HEADER, false);
+                    curl_setopt($ch, CURLOPT_TIMEOUT, $this->segmentTimeout);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                    curl_setopt($ch, CURLOPT_USERAGENT, $this->ipGuard ? $this->ipGuard->getRandomUA() : 'Mozilla/5.0');
+                    curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+                    curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:!DH');
+
+                    // 代理支持
+                    $proxyUsed = '';
+                    if ($this->useProxy && $this->ipGuard) {
+                        $proxyUsed = $this->ipGuard->configureCurl($ch, $videoUrl);
+                    }
+
+                    $data = curl_exec($ch);
+                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $curlError = curl_error($ch);
+                    $downloadMs = round((microtime(true) - $startTime) * 1000, 1);
+                    curl_close($ch);
+
+                    $origIndex = is_numeric($idx) ? $idx : $idx;
+                    if ($httpCode >= 200 && $httpCode < 300 && is_string($data) && strlen($data) > 0) {
+                        if (strlen($data) > $maxBytes) {
+                            $data = substr($data, 0, $maxBytes);
+                        }
+                        $md5 = md5($data);
+                        $childResults[$origIndex] = [
+                            'success' => true,
+                            'md5' => $md5,
+                            'size' => strlen($data),
+                            'download_ms' => $downloadMs,
+                            'proxy' => $proxyUsed,
+                        ];
+                    } else {
+                        $childResults[$origIndex] = [
+                            'success' => false,
+                            'md5' => '',
+                            'size' => 0,
+                            'download_ms' => $downloadMs,
+                            'error' => 'HTTP ' . $httpCode . ' - ' . ($curlError ?: '未知错误'),
+                        ];
+                    }
+                }
+
+                // 将结果写入临时文件
+                file_put_contents($resultFile, json_encode($childResults, JSON_UNESCAPED_UNICODE));
+                exit(0);
+            } else {
+                $pids[] = $pid;
+            }
+        }
+
+        // 父进程：等待所有子进程完成
+        foreach ($pids as $pid) {
+            pcntl_waitpid($pid, $status);
+        }
+
+        // 收集结果
+        foreach ($resultFiles as $file) {
+            if (file_exists($file)) {
+                $data = json_decode(file_get_contents($file), true);
+                if (is_array($data)) {
+                    foreach ($data as $idx => $result) {
+                        $results[$idx] = $result;
+                    }
+                }
+            }
+        }
+
+        // 清理临时文件
+        $this->cleanupTempDir($tempDir);
+
+        ksort($results);
+        return $results;
+    }
+
+    /**
+     * 获取最佳多进程数
+     */
+    public function getOptimalProcessCount()
+    {
+        if ($this->numProcesses <= 0) {
+            // 自动检测：读取 CPU 核心数
+            $cpuCores = 4; // 默认4核
+            if (function_exists('posix_sysconf') && defined('_SC_NPROCESSORS_ONLN')) {
+                $cpuCores = (int)posix_sysconf(23); // _SC_NPROCESSORS_ONLN = 23
+            } elseif (is_readable('/proc/cpuinfo')) {
+                $cpuinfo = file_get_contents('/proc/cpuinfo');
+                preg_match_all('/^processor/m', $cpuinfo, $matches);
+                $cpuCores = count($matches[0]) ?: 4;
+            }
+            return max(2, min(8, $cpuCores));
+        }
+        if ($this->numProcesses < 0) {
+            return 0; // 禁用多进程
+        }
+        return $this->numProcesses;
+    }
+
+    /**
+     * 清理临时目录
+     */
+    private function cleanupTempDir($dir)
+    {
+        if (!is_dir($dir)) return;
+        $files = glob($dir . '/*');
+        foreach ($files as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
+        @rmdir($dir);
+    }
+
+    /**
      * 串行下载（降级方案）
      */
     private function downloadSegmentsSequential($segments, $videoUrl)
@@ -737,9 +931,15 @@ class MD5PatternCleaner
         }
 
         if (!empty($needDownload)) {
-            if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
+            $numProcs = $this->getOptimalProcessCount();
+            if ($numProcs > 1 && function_exists('pcntl_fork')) {
+                // 多进程模式：更快
+                $segmentResults = $this->downloadSegmentsMultiProcess($needDownload, $videoUrl, $numProcs);
+            } elseif ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
+                // 降级：curl_multi 并发
                 $segmentResults = $this->downloadSegmentsConcurrent($needDownload, $videoUrl, $actualConcurrency);
             } else {
+                // 降级：串行
                 $segmentResults = $this->downloadSegmentsSequential($needDownload, $videoUrl);
             }
         }
@@ -953,9 +1153,15 @@ class MD5PatternCleaner
 
         $segmentResults = [];
         if (!empty($needDownload)) {
-            if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
+            $numProcs = $this->getOptimalProcessCount();
+            if ($numProcs > 1 && function_exists('pcntl_fork')) {
+                // 多进程模式：更快
+                $segmentResults = $this->downloadSegmentsMultiProcess($needDownload, $videoUrl, $numProcs);
+            } elseif ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
+                // 降级：curl_multi 并发
                 $segmentResults = $this->downloadSegmentsConcurrent($needDownload, $videoUrl, $actualConcurrency);
             } else {
+                // 降级：串行
                 $segmentResults = $this->downloadSegmentsSequential($needDownload, $videoUrl);
             }
         }
