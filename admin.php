@@ -245,6 +245,7 @@ $ajaxEarlyWhitelist = [
     'ajax_reload_algorithms', 'ajax_test_algorithms',
     'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
     'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist', 'ajax_md5_deep_analyze',
+    'ajax_md5_diagnose', 'ajax_md5_fetch_segment', 'ajax_md5_manual_mark',
     'ajax_feat_test', 'ajax_feat_stats', 'ajax_feat_learn', 'ajax_feat_mark',
     'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
     'ajax_ad_snippet_fetch',
@@ -788,6 +789,134 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             ];
 
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // === MD5 诊断工具：解析 M3U8 并显示原始内容 ===
+        if ($ajaxEarlyAction === 'ajax_md5_diagnose') {
+            @set_time_limit(30);
+            $targetUrl = trim($_POST['url'] ?? '');
+            if ($targetUrl === '' || !filter_var($targetUrl, FILTER_VALIDATE_URL)) {
+                echo json_encode(['code' => 400, 'error' => '请输入有效的 URL'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $result = MD5PatternCleaner::resolveM3U8FromUrl($targetUrl);
+            if ($result === false) {
+                echo json_encode(['code' => 500, 'error' => '无法获取 M3U8，请检查 URL 是否正确（需要 .m3u8 结尾的地址）'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $content = $result['content'];
+            $finalUrl = $result['final_url'] ?? $targetUrl;
+
+            // 解析片段列表
+            $parsed = $md5->parseM3U8($content);
+            $segments = $parsed['segments'];
+            $total = count($segments);
+
+            echo json_encode([
+                'code' => 200,
+                'url' => $finalUrl,
+                'header' => $parsed['header'],
+                'total_segments' => $total,
+                'has_endlist' => $parsed['has_end'],
+                'segments_preview' => array_slice($segments, 0, 20, true),
+                'raw_first_2000' => substr($content, 0, 2000),
+                'domain' => parse_url($finalUrl, PHP_URL_SCHEME) . '://' . parse_url($finalUrl, PHP_URL_HOST),
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // === MD5 诊断工具：单独下载并分析某个 TS 片段 ===
+        if ($ajaxEarlyAction === 'ajax_md5_fetch_segment') {
+            @set_time_limit(30);
+            $m3u8Url = trim($_POST['m3u8_url'] ?? '');
+            $segmentIndex = (int)($_POST['segment_index'] ?? 0);
+            $segmentUri = trim($_POST['segment_uri'] ?? '');
+
+            if ($m3u8Url === '' || $segmentIndex < 0) {
+                echo json_encode(['code' => 400, 'error' => '参数不完整'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // 如果没提供 uri，从 m3u8 解析
+            if ($segmentUri === '') {
+                $m3u8Content = MD5PatternCleaner::downloadM3U8($m3u8Url);
+                if ($m3u8Content === false) {
+                    echo json_encode(['code' => 500, 'error' => '无法下载 M3U8'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                $parsed = $md5->parseM3U8($m3u8Content);
+                $segments = $parsed['segments'];
+                if (!isset($segments[$segmentIndex])) {
+                    echo json_encode(['code' => 400, 'error' => '片段索引超出范围（总共 ' . count($segments) . ' 段）'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                $segmentUri = $segments[$segmentIndex]['uri'];
+            }
+
+            $fullUrl = MD5PatternCleaner::resolveUrl($m3u8Url, $segmentUri);
+
+            // 下载片段
+            $ch = curl_init($fullUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            $data = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErr = curl_error($ch);
+            curl_close($ch);
+
+            $size = strlen($data);
+            $md5hash = $size > 0 ? md5($data) : '';
+
+            // 查询数据库
+            $status = null;
+            if ($md5hash) {
+                $status = $md5DB->queryBatch([$md5hash])[$md5hash] ?? null;
+            }
+
+            echo json_encode([
+                'code' => 200,
+                'segment_index' => $segmentIndex,
+                'uri' => $segmentUri,
+                'full_url' => $fullUrl,
+                'http_code' => $httpCode,
+                'size' => $size,
+                'md5' => $md5hash,
+                'curl_error' => $curlErr,
+                'db_status' => $status,
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // === MD5 诊断工具：手动标记某个 MD5 为广告/正片 ===
+        if ($ajaxEarlyAction === 'ajax_md5_manual_mark') {
+            $md5hash = strtolower(trim($_POST['md5'] ?? ''));
+            $isAd = (bool)($_POST['is_ad'] ?? true);
+            $reason = trim($_POST['reason'] ?? '人工标记');
+
+            if ($md5hash === '' || !preg_match('/^[a-f0-9]{32}$/', $md5hash)) {
+                echo json_encode(['code' => 400, 'error' => '无效的 MD5'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($isAd) {
+                $md5DB->markAsAd($md5hash, true, $reason);
+            } else {
+                $md5DB->addToWhitelist($md5hash, $reason);
+            }
+
+            echo json_encode([
+                'code' => 200,
+                'md5' => $md5hash,
+                'is_ad' => $isAd,
+                'marked' => true,
+            ], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
@@ -1914,6 +2043,53 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
             <div id="deep_loading" style="display:none;text-align:center;padding:30px;color:#666">
                 <div style="font-size:16px">🧪 正在下载并分析 TS 片段，请稍候...</div>
                 <div style="font-size:13px;margin-top:8px;color:#888">这可能需要几秒钟时间</div>
+            </div>
+
+            <!-- ===== MD5 诊断工具 ===== -->
+            <div class="panel" style="margin-top:16px;border:2px solid #f59e0b;background:#fffbeb">
+                <h3 style="margin-top:0;color:#b45309">🔍 MD5 诊断验证工具</h3>
+                <p style="color:#666;font-size:13px;margin:6px 0 12px 0">
+                    如果深度分析显示"全部是新片段"，用这个工具验证：① M3U8 能否正常获取 ② 片段能否下载 ③ MD5 数据库状态
+                </p>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+                    <div style="flex:2;min-width:280px">
+                        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">M3U8 URL（诊断用）</label>
+                        <input type="text" id="diag_url" placeholder="https://example.com/video.m3u8" style="width:100%;padding:9px;font-size:13px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
+                    </div>
+                    <div style="flex:0">
+                        <button type="button" onclick="diagM3u8()" style="padding:9px 18px;font-size:13px;background:#f59e0b;color:white;border:none;border-radius:6px;cursor:pointer">1️⃣ 解析M3U8</button>
+                    </div>
+                    <div style="flex:0">
+                        <button type="button" onclick="diagFetchSegment()" style="padding:9px 18px;font-size:13px;background:#7c3aed;color:white;border:none;border-radius:6px;cursor:pointer">2️⃣ 下载片段</button>
+                    </div>
+                    <div style="flex:0">
+                        <button type="button" onclick="diagNextSegment()" style="padding:9px 14px;font-size:13px;background:#6b7280;color:white;border:none;border-radius:6px;cursor:pointer">▶️ 下一个片段</button>
+                    </div>
+                </div>
+                <!-- 步骤1：M3U8解析结果 -->
+                <div id="diag_step1_result" style="display:none;margin-top:12px"></div>
+                <!-- 步骤2：片段下载结果 -->
+                <div id="diag_step2_result" style="display:none;margin-top:12px"></div>
+                <!-- 步骤3：手动标记 -->
+                <div id="diag_step3" style="display:none;margin-top:12px;padding:12px;background:#f3f4f6;border-radius:6px">
+                    <h4 style="margin:0 0 8px 0;color:#374151;font-size:14px">3️⃣ 手动标记（根据上面结果判断）</h4>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                        <span style="font-size:13px;color:#555">MD5：</span>
+                        <input type="text" id="diag_mark_md5" readonly style="flex:1;min-width:200px;padding:6px 8px;font-size:13px;border:1px solid #ddd;border-radius:4px;font-family:monospace">
+                        <select id="diag_mark_type" style="padding:6px 8px;font-size:13px;border:1px solid #ddd;border-radius:4px">
+                            <option value="ad">🚫 标记为广告</option>
+                            <option value="content">✅ 标记为正片</option>
+                        </select>
+                        <input type="text" id="diag_mark_reason" placeholder="原因（如：人工确认广告片段）" style="flex:2;min-width:180px;padding:6px 8px;font-size:13px;border:1px solid #ddd;border-radius:4px">
+                        <button type="button" onclick="diagManualMark()" style="padding:7px 14px;font-size:13px;background:#059669;color:white;border:none;border-radius:4px;cursor:pointer">✅ 确认标记</button>
+                    </div>
+                    <div id="diag_mark_result" style="margin-top:8px;font-size:13px"></div>
+                </div>
+                <!-- M3U8 原始内容预览 -->
+                <div id="diag_raw_content" style="display:none;margin-top:12px">
+                    <h4 style="margin:0 0 6px 0;color:#374151;font-size:14px">📄 M3U8 原始内容（前2000字符）</h4>
+                    <pre id="diag_raw_pre" style="background:#1f2937;color:#f9fafb;padding:12px;border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
+                </div>
             </div>
 
             <div class="panel">
@@ -5856,6 +6032,193 @@ function finishDeepAnalyze(data) {
     // 更新清理后的 M3U8
     document.getElementById('deep_clean_m3u8').value = data.clean_m3u8 || '';
 }
+// ===== MD5 诊断工具 JS =====
+var _diagCurrentM3u8Url = '';
+var _diagSegments = [];
+var _diagSegmentIndex = 0;
+
+function diagM3u8() {
+    var url = document.getElementById('diag_url').value.trim();
+    if (!url) {
+        alert('请输入 M3U8 URL');
+        return;
+    }
+
+    var resultDiv = document.getElementById('diag_step1_result');
+    var rawDiv = document.getElementById('diag_raw_content');
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<div style="padding:8px;color:#666">⏳ 正在解析 M3U8...</div>';
+    rawDiv.style.display = 'none';
+
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_diagnose');
+    formData.append('url', url);
+
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code !== 200) {
+                resultDiv.innerHTML = '<div style="padding:8px;color:#dc2626">❌ 解析失败：' + (data.error || '未知错误') + '</div>';
+                return;
+            }
+
+            _diagCurrentM3u8Url = data.url;
+            _diagSegments = data.segments_preview || [];
+            var total = data.total_segments || 0;
+
+            var segList = '';
+            if (_diagSegments.length > 0) {
+                segList = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">'
+                    + '<tr style="background:#f3f4f6"><th style="padding:4px 6px;text-align:left">#</th><th style="padding:4px 6px;text-align:left">时长</th><th style="padding:4px 6px;text-align:left">URI</th></tr>';
+                _diagSegments.forEach(function(s, i) {
+                    segList += '<tr><td style="padding:4px 6px;border-bottom:1px solid #eee">' + i + '</td>'
+                        + '<td style="padding:4px 6px;border-bottom:1px solid #eee">' + parseFloat(s.duration).toFixed(2) + 's</td>'
+                        + '<td style="padding:4px 6px;border-bottom:1px solid #eee;font-size:11px;word-break:break-all;font-family:monospace">' + s.uri + '</td></tr>';
+                });
+                if (total > _diagSegments.length) {
+                    segList += '<tr><td colspan="3" style="padding:4px 6px;color:#888;font-size:12px">... 还有 ' + (total - _diagSegments.length) + ' 个片段未显示</td></tr>';
+                }
+                segList += '</table>';
+            }
+
+            resultDiv.innerHTML = ''
+                + '<div style="padding:8px 12px;background:#f0fdf4;border-radius:6px;font-size:13px">'
+                + '<b>✅ M3U8 解析成功！</b><br>'
+                + '地址：<code style="word-break:break-all">' + data.url + '</code><br>'
+                + '域名：' + data.domain + '<br>'
+                + '片段总数：<b>' + total + '</b><br>'
+                + 'Header 行数：<code>' + data.header.split('\\n').length + '</code><br>'
+                + '有 ENDLIST：' + (data.has_endlist ? '✅ 是' : '❌ 否') + '</div>'
+                + segList;
+
+            // 显示原始内容
+            rawDiv.style.display = 'block';
+            document.getElementById('diag_raw_pre').textContent = data.raw_first_2000 || '';
+
+            // 初始化片段索引
+            if (_diagSegments.length > 0) {
+                _diagSegmentIndex = 0;
+            }
+        })
+        .catch(function(e) {
+            resultDiv.innerHTML = '<div style="padding:8px;color:#dc2626">❌ 请求失败：' + e.message + '</div>';
+        });
+}
+
+function diagFetchSegment() {
+    var segIndex = _diagSegmentIndex;
+    var seg = _diagSegments[segIndex];
+
+    var resultDiv = document.getElementById('diag_step2_result');
+    var step3Div = document.getElementById('diag_step3');
+    var m3u8Url = _diagCurrentM3u8Url || document.getElementById('diag_url').value.trim();
+
+    if (!m3u8Url || !seg) {
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div style="padding:8px;color:#dc2626">❌ 请先执行"1️⃣ 解析M3U8"，确保片段列表已加载</div>';
+        return;
+    }
+
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<div style="padding:8px;color:#666">⏳ 正在下载片段 #' + segIndex + '...</div>';
+    step3Div.style.display = 'none';
+
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_fetch_segment');
+    formData.append('m3u8_url', m3u8Url);
+    formData.append('segment_index', segIndex);
+    formData.append('segment_uri', seg.uri);
+
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code !== 200) {
+                resultDiv.innerHTML = '<div style="padding:8px;color:#dc2626">❌ 下载失败：' + (data.error || '未知错误') + '</div>';
+                return;
+            }
+
+            var dbStatus = data.db_status;
+            var dbInfo = '';
+            if (dbStatus) {
+                dbInfo = '<br>数据库状态：<b style="color:' + (dbStatus.is_ad || dbStatus.in_blacklist ? '#dc2626' : '#059669') + '">'
+                    + (dbStatus.is_ad ? '🚫 广告(' + dbStatus.count + '次)' :
+                       dbStatus.in_blacklist ? '🚫 黑名单' :
+                       dbStatus.is_whitelist ? '✅ 白名单(正片)' :
+                       dbStatus.count + '次出现')
+                    + '</b>';
+            } else {
+                dbInfo = '<br>数据库状态：<span style="color:#d97706">⚠️ 数据库中无记录（新片段）</span>';
+            }
+
+            var httpColor = data.http_code >= 200 && data.http_code < 300 ? '#059669' : '#dc2626';
+            var sizeKB = (data.size / 1024).toFixed(1);
+            var md5Color = data.md5 ? '#059669' : '#dc2626';
+
+            resultDiv.innerHTML = ''
+                + '<div style="padding:10px 12px;background:#f0fdf4;border-radius:6px;font-size:13px">'
+                + '<b>✅ 片段下载成功！</b>' + dbInfo + '<br>'
+                + 'HTTP 状态：<b style="color:' + httpColor + '">' + data.http_code + '</b><br>'
+                + '片段大小：<b>' + sizeKB + ' KB</b><br>'
+                + 'MD5：<code style="font-size:12px;word-break:break-all;color:' + md5Color + '">' + (data.md5 || 'N/A') + '</code><br>'
+                + '片段URI：<code style="font-size:11px;word-break:break-all">' + data.uri + '</code><br>'
+                + '完整URL：<a href="' + data.full_url + '" target="_blank" style="font-size:11px;word-break:break-all">' + data.full_url + '</a><br>'
+                + 'CURL错误：' + (data.curl_error || '无') + '</div>';
+
+            // 填充手动标记表单
+            if (data.md5) {
+                step3Div.style.display = 'block';
+                document.getElementById('diag_mark_md5').value = data.md5;
+                document.getElementById('diag_mark_result').textContent = '';
+            }
+        })
+        .catch(function(e) {
+            resultDiv.innerHTML = '<div style="padding:8px;color:#dc2626">❌ 请求失败：' + e.message + '</div>';
+        });
+}
+
+function diagNextSegment() {
+    if (_diagSegments.length === 0) {
+        alert('请先执行"1️⃣ 解析M3U8"');
+        return;
+    }
+    _diagSegmentIndex = (_diagSegmentIndex + 1) % _diagSegments.length;
+    diagFetchSegment();
+}
+
+function diagManualMark() {
+    var md5 = document.getElementById('diag_mark_md5').value.trim();
+    var isAd = document.getElementById('diag_mark_type').value === 'ad';
+    var reason = document.getElementById('diag_mark_reason').value.trim() || (isAd ? '人工标记广告' : '人工标记正片');
+
+    if (!md5) {
+        alert('请先获取片段 MD5');
+        return;
+    }
+
+    var resultDiv = document.getElementById('diag_mark_result');
+    resultDiv.textContent = '⏳ 正在标记...';
+
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_manual_mark');
+    formData.append('md5', md5);
+    formData.append('is_ad', isAd ? '1' : '0');
+    formData.append('reason', reason);
+
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                var tag = isAd ? '🚫 已标记为广告' : '✅ 已标记为正片';
+                resultDiv.innerHTML = '<b style="color:#059669">' + tag + '</b> — ' + reason + '<br>MD5: ' + md5;
+            } else {
+                resultDiv.innerHTML = '<span style="color:#dc2626">❌ 标记失败：' + (data.error || '未知错误') + '</span>';
+            }
+        })
+        .catch(function(e) {
+            resultDiv.innerHTML = '<span style="color:#dc2626">❌ 请求失败：' + e.message + '</span>';
+        });
+}
+
 // 复制清理后的 M3U8
 function copyDeepM3u8() {
     var m3u8Content = document.getElementById('deep_clean_m3u8').value;
