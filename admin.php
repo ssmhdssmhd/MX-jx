@@ -546,7 +546,8 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         echo json_encode(['code' => 200, 'report' => $report, 'saved' => true], JSON_UNESCAPED_UNICODE);
         exit;
     } elseif ($ajaxEarlyAction === 'ajax_md5_test' || $ajaxEarlyAction === 'ajax_md5_stats'
-        || $ajaxEarlyAction === 'ajax_md5_mark' || $ajaxEarlyAction === 'ajax_md5_whitelist') {
+        || $ajaxEarlyAction === 'ajax_md5_mark' || $ajaxEarlyAction === 'ajax_md5_whitelist'
+        || $ajaxEarlyAction === 'ajax_md5_deep_analyze') {
         // === MD5 指纹去广告：测试 / 统计 / 标记 ===
         require_once __DIR__ . '/algorithms/md5_pattern_cleaner.php';
         $md5 = new MD5PatternCleaner();
@@ -1759,6 +1760,9 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     </div>
                 </div>
             </div>
+
+            <!-- 错误提示区 -->
+            <div id="deep_error" style="display:none;margin-bottom:20px;padding:14px 18px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#dc2626;font-size:14px"></div>
 
             <!-- 分析结果展示区 -->
             <div id="deep_analysis_result" style="display:none;margin-bottom:20px">
@@ -5527,13 +5531,18 @@ function md5DeepAnalyze() {
     var videoUrl = document.getElementById('deep_video_url').value.trim();
     var m3u8Url = document.getElementById('deep_m3u8_url').value.trim();
 
-    if (!videoUrl && !m3u8Url) {
-        alert('请输入视频 URL 或 M3U8 地址');
-        return;
-    }
-
+    var errorDiv = document.getElementById('deep_error');
     var resultDiv = document.getElementById('deep_analysis_result');
     var loadingDiv = document.getElementById('deep_loading');
+
+    errorDiv.style.display = 'none';
+    errorDiv.textContent = '';
+
+    if (!videoUrl && !m3u8Url) {
+        errorDiv.style.display = 'block';
+        errorDiv.textContent = '❌ 请输入视频 URL 或 M3U8 地址';
+        return;
+    }
 
     resultDiv.style.display = 'none';
     loadingDiv.style.display = 'block';
@@ -5544,11 +5553,20 @@ function md5DeepAnalyze() {
     if (m3u8Url) formData.append('m3u8_url', m3u8Url);
 
     fetch(window.location.href, { method: 'POST', body: formData })
-        .then(function(r) { return r.json(); })
+        .then(function(r) {
+            var contentType = r.headers.get('content-type') || '';
+            if (contentType.indexOf('application/json') === -1) {
+                return r.text().then(function(text) {
+                    throw new Error('服务器返回了非 JSON 内容（' + (text.substring(0, 100) || '空') + '）');
+                });
+            }
+            return r.json();
+        })
         .then(function(data) {
             loadingDiv.style.display = 'none';
             if (data.code !== 200) {
-                alert('分析失败：' + (data.error || '未知错误'));
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = '❌ 分析失败：' + (data.error || data.msg || '未知错误');
                 return;
             }
 
@@ -5611,27 +5629,37 @@ function md5DeepAnalyze() {
             // 更新清理后的 M3U8
             document.getElementById('deep_clean_m3u8').value = data.clean_m3u8 || '';
 
+            // 自动滚动到结果区域
+            resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
         })
         .catch(function(e) {
             loadingDiv.style.display = 'none';
-            alert('请求失败：' + e.message);
+            errorDiv.style.display = 'block';
+            errorDiv.textContent = '❌ 请求失败：' + e.message;
         });
 }
 // 复制清理后的 M3U8
 function copyDeepM3u8() {
     var m3u8Content = document.getElementById('deep_clean_m3u8').value;
     if (!m3u8Content) {
-        alert('没有可复制的内容');
+        var errorDiv = document.getElementById('deep_error');
+        errorDiv.style.display = 'block';
+        errorDiv.textContent = '⚠️ 没有可复制的内容';
         return;
     }
+    var btn = event.target;
+    var origText = btn.textContent;
     navigator.clipboard.writeText(m3u8Content).then(function() {
-        alert('已复制到剪贴板');
+        btn.textContent = '✅ 已复制';
+        setTimeout(function() { btn.textContent = origText; }, 2000);
     }).catch(function() {
         // 降级方案
         var textarea = document.getElementById('deep_clean_m3u8');
         textarea.select();
         document.execCommand('copy');
-        alert('已复制到剪贴板');
+        btn.textContent = '✅ 已复制';
+        setTimeout(function() { btn.textContent = origText; }, 2000);
     });
 }
 // ===== MD5 指纹去广告：页面访问时触发每日检测 =====
