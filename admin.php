@@ -245,7 +245,7 @@ $ajaxEarlyWhitelist = [
     'ajax_reload_algorithms', 'ajax_test_algorithms',
     'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
     'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist', 'ajax_md5_deep_analyze',
-    'ajax_md5_diagnose', 'ajax_md5_fetch_segment', 'ajax_md5_manual_mark',
+    'ajax_md5_diagnose', 'ajax_md5_fetch_segment', 'ajax_md5_manual_mark', 'ajax_md5_deep_cluster',
     'ajax_feat_test', 'ajax_feat_stats', 'ajax_feat_learn', 'ajax_feat_mark',
     'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
     'ajax_ad_snippet_fetch',
@@ -551,7 +551,8 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         || $ajaxEarlyAction === 'ajax_md5_deep_analyze'
         || $ajaxEarlyAction === 'ajax_md5_diagnose'
         || $ajaxEarlyAction === 'ajax_md5_fetch_segment'
-        || $ajaxEarlyAction === 'ajax_md5_manual_mark') {
+        || $ajaxEarlyAction === 'ajax_md5_manual_mark'
+        || $ajaxEarlyAction === 'ajax_md5_deep_cluster') {
         // === MD5 指纹去广告：测试 / 统计 / 标记 ===
         require_once __DIR__ . '/algorithms/md5_pattern_cleaner.php';
         $md5 = new MD5PatternCleaner();
@@ -919,6 +920,45 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 'md5' => $md5hash,
                 'is_ad' => $isAd,
                 'marked' => true,
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // === MD5 深度分析：聚类二次分析（识别广告集群、比特率异常等）===
+        if ($ajaxEarlyAction === 'ajax_md5_deep_cluster') {
+            $segmentsJson = $_POST['segments'] ?? '';
+            $totalSegments = (int)($_POST['total_segments'] ?? 0);
+            $m3u8Content = $_POST['m3u8_content'] ?? '';
+            $m3u8Url = trim($_POST['m3u8_url'] ?? '');
+
+            $allSegments = json_decode($segmentsJson, true);
+            if (!is_array($allSegments)) {
+                echo json_encode(['code' => 400, 'error' => '片段数据格式错误'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $clusterResult = $md5->deepClusterAnalyze($allSegments, $totalSegments);
+
+            $cleanM3u8 = '';
+            if (!empty($m3u8Content) && !empty($m3u8Url)) {
+                $adIndexes = [];
+                foreach ($clusterResult['refined_segments'] as $seg) {
+                    if (!empty($seg['is_ad'])) {
+                        $adIndexes[$seg['index']] = true;
+                    }
+                }
+                $cleanM3u8 = $md5->buildCleanM3U8ByIndex($m3u8Content, $m3u8Url, $adIndexes);
+            }
+
+            echo json_encode([
+                'code' => 200,
+                'ad_clusters' => $clusterResult['ad_clusters'],
+                'refined_segments' => $clusterResult['refined_segments'],
+                'analysis_summary' => $clusterResult['analysis_summary'],
+                'ad_count' => $clusterResult['ad_count'],
+                'ad_duration' => $clusterResult['ad_duration'],
+                'total_duration' => $clusterResult['total_duration'],
+                'clean_m3u8' => $cleanM3u8,
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -2024,6 +2064,8 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <h4 style="margin-top:0;color:#059669">📊 分析统计</h4>
                     <div id="deep_stats" style="display:flex;gap:20px;flex-wrap:wrap;font-size:14px"></div>
                 </div>
+                <div id="deep_cluster_status" style="display:none;margin-top:12px;padding:12px 16px;border-radius:8px;font-size:14px"></div>
+                <div id="deep_cluster_summary" style="margin-top:8px"></div>
                 <div class="panel" style="border:1px solid #e5e7eb;margin-top:12px">
                     <h4 style="margin-top:0;color:#dc2626">🚫 广告片段（将被删除）</h4>
                     <div id="deep_ad_segments" style="max-height:300px;overflow-y:auto"></div>
@@ -5833,6 +5875,7 @@ var _deepAllSegments = [];
 var _deepCacheKey = '';
 var _deepVideoUrl = '';
 var _deepM3u8Url = '';
+var _deepM3u8Content = '';
 var _deepDomain = '';
 var _deepTotal = 0;
 
@@ -5863,6 +5906,7 @@ function md5DeepAnalyze() {
     _deepCacheKey = '';
     _deepVideoUrl = videoUrl;
     _deepM3u8Url = '';
+    _deepM3u8Content = '';
     _deepDomain = '';
     _deepTotal = 0;
 
@@ -5985,14 +6029,17 @@ function updateDeepResultDisplay(isQuickMode, total) {
         adSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">未检测到广告片段</div>';
     } else {
         var adTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-            + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">原因</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
+            + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">大小</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">原因</th><th style="padding:6px 8px;text-align:left">操作</th></tr>';
         adSegs.forEach(function(s) {
+            var sizeStr = s.size ? (s.size > 1024 ? (s.size/1024).toFixed(1) + 'KB' : s.size + 'B') : '-';
+            var markBtn = s.md5 ? '<button onclick="manualMarkSeg(\'' + s.md5 + '\', false, \'' + s.index + '\')" style="padding:3px 8px;font-size:11px;background:#059669;color:white;border:none;border-radius:3px;cursor:pointer">设为正片</button>' : '-';
             adTable += '<tr style="border-bottom:1px solid #e5e7eb">'
                 + '<td style="padding:6px 8px">' + s.index + '</td>'
                 + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
+                + '<td style="padding:6px 8px">' + sizeStr + '</td>'
                 + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
                 + '<td style="padding:6px 8px;color:#dc2626">' + (s.reason || '') + '</td>'
-                + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
+                + '<td style="padding:6px 8px">' + markBtn + '</td>'
                 + '</tr>';
         });
         adTable += '</table>';
@@ -6006,14 +6053,17 @@ function updateDeepResultDisplay(isQuickMode, total) {
         contentSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">无正片片段</div>';
     } else {
         var contentTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-            + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">状态</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
+            + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">大小</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">状态</th><th style="padding:6px 8px;text-align:left">操作</th></tr>';
         contentSegs.forEach(function(s) {
+            var sizeStr = s.size ? (s.size > 1024 ? (s.size/1024).toFixed(1) + 'KB' : s.size + 'B') : '-';
+            var markBtn = s.md5 ? '<button onclick="manualMarkSeg(\'' + s.md5 + '\', true, \'' + s.index + '\')" style="padding:3px 8px;font-size:11px;background:#dc2626;color:white;border:none;border-radius:3px;cursor:pointer">设为广告</button>' : '-';
             contentTable += '<tr style="border-bottom:1px solid #e5e7eb">'
                 + '<td style="padding:6px 8px">' + s.index + '</td>'
                 + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
+                + '<td style="padding:6px 8px">' + sizeStr + '</td>'
                 + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
                 + '<td style="padding:6px 8px;color:#059669">' + (s.reason || s.status || '') + '</td>'
-                + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
+                + '<td style="padding:6px 8px">' + markBtn + '</td>'
                 + '</tr>';
         });
         contentTable += '</table>';
@@ -6032,8 +6082,106 @@ function finishDeepAnalyze(data) {
     btn.textContent = '🚀 开始深度分析';
     progressDiv.style.display = 'none';
 
-    // 更新清理后的 M3U8
     document.getElementById('deep_clean_m3u8').value = data.clean_m3u8 || '';
+
+    runDeepClusterAnalysis();
+}
+
+function runDeepClusterAnalysis() {
+    var clusterStatusDiv = document.getElementById('deep_cluster_status');
+    var clusterSummaryDiv = document.getElementById('deep_cluster_summary');
+
+    if (clusterStatusDiv) clusterStatusDiv.style.display = 'block';
+    if (clusterStatusDiv) clusterStatusDiv.innerHTML = '🔬 正在进行深度聚类分析（广告集群识别 + 比特率异常检测）...';
+
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_deep_cluster');
+    formData.append('segments', JSON.stringify(_deepAllSegments));
+    formData.append('total_segments', _deepTotal || 0);
+    formData.append('m3u8_content', _deepM3u8Content || '');
+    formData.append('m3u8_url', _deepM3u8Url || '');
+
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) {
+            var ct = r.headers.get('content-type') || '';
+            if (ct.indexOf('application/json') === -1) {
+                return r.text().then(function(t) {
+                    throw new Error('聚类分析返回非JSON');
+                });
+            }
+            return r.json();
+        })
+        .then(function(data) {
+            if (data.code !== 200) {
+                throw new Error(data.error || '聚类分析失败');
+            }
+
+            _deepAllSegments = data.refined_segments || _deepAllSegments;
+
+            if (data.clean_m3u8) {
+                document.getElementById('deep_clean_m3u8').value = data.clean_m3u8;
+            }
+
+            if (clusterStatusDiv) {
+                clusterStatusDiv.innerHTML = '✅ 深度聚类分析完成！' + (data.analysis_summary || '');
+                clusterStatusDiv.style.background = '#f0fdf4';
+                clusterStatusDiv.style.color = '#059669';
+            }
+
+            if (clusterSummaryDiv && data.ad_clusters && data.ad_clusters.length > 0) {
+                var clusterHtml = '<div style="margin-top:10px"><b>🎯 广告集群识别：</b><ul style="margin:5px 0;padding-left:20px">';
+                data.ad_clusters.forEach(function(c) {
+                    clusterHtml += '<li>第 ' + c.start + '-' + c.end + ' 段，共 ' + c.count + ' 段（' + (c.total_duration || 0).toFixed(1) + '秒）</li>';
+                });
+                clusterHtml += '</ul></div>';
+                clusterSummaryDiv.innerHTML = clusterHtml;
+            }
+
+            updateDeepResultDisplay(false, _deepTotal);
+        })
+        .catch(function(e) {
+            if (clusterStatusDiv) {
+                clusterStatusDiv.innerHTML = '⚠️ 深度聚类分析未执行：' + e.message;
+                clusterStatusDiv.style.background = '#fffbeb';
+                clusterStatusDiv.style.color = '#d97706';
+            }
+        });
+}
+
+function manualMarkSeg(md5, isAd, index) {
+    var reason = isAd ? '后台人工标记(深度分析)' : '后台人工标记(正片)';
+    var actionText = isAd ? '设为广告' : '设为正片';
+
+    if (!confirm('确定将第 ' + index + ' 段 ' + actionText + ' 吗？')) return;
+
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_manual_mark');
+    formData.append('md5', md5);
+    formData.append('is_ad', isAd ? '1' : '0');
+    formData.append('reason', reason);
+
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code !== 200) {
+                alert('标记失败：' + (data.error || '未知错误'));
+                return;
+            }
+
+            for (var i = 0; i < _deepAllSegments.length; i++) {
+                if (_deepAllSegments[i].md5 === md5) {
+                    _deepAllSegments[i].is_ad = isAd;
+                    _deepAllSegments[i].reason = isAd ? '人工标记-广告' : '人工标记-正片';
+                    _deepAllSegments[i].status = isAd ? 'manual_ad' : 'manual_content';
+                }
+            }
+
+            updateDeepResultDisplay(false, _deepTotal);
+            alert('✅ 标记成功！');
+        })
+        .catch(function(e) {
+            alert('标记失败：' + e.message);
+        });
 }
 // ===== MD5 诊断工具 JS =====
 var _diagCurrentM3u8Url = '';

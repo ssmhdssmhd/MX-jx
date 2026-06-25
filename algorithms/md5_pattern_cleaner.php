@@ -175,7 +175,7 @@ class MD5PatternCleaner
      * @param string $m3u8Content M3U8 文件内容
      * @return array ['segments' => [...], 'header' => '...', 'has_end' => bool]
      */
-    private function parseM3U8($m3u8Content)
+    public function parseM3U8($m3u8Content)
     {
         $segments = [];
         $lines = explode("\n", $m3u8Content);
@@ -704,6 +704,27 @@ class MD5PatternCleaner
         $segments = $parsed['segments'];
         $totalSegments = count($segments);
 
+        // 预计算全片时长统计，用于启发式检测
+        $allDurations = [];
+        foreach ($segments as $s) {
+            $allDurations[] = $s['duration'];
+        }
+        sort($allDurations);
+        $medianDuration = $totalSegments > 0 ? $allDurations[floor($totalSegments / 2)] : 0;
+        $minDuration = $totalSegments > 0 ? $allDurations[0] : 0;
+        $maxDuration = $totalSegments > 0 ? end($allDurations) : 0;
+
+        // 计算时长众数区间（用于识别广告群）
+        $durationBuckets = [];
+        foreach ($allDurations as $d) {
+            $bucket = round($d, 1);
+            if (!isset($durationBuckets[$bucket])) $durationBuckets[$bucket] = 0;
+            $durationBuckets[$bucket]++;
+        }
+        arsort($durationBuckets);
+        $mostCommonDuration = $totalSegments > 0 ? (float)key($durationBuckets) : 0;
+        $mostCommonCount = $totalSegments > 0 ? current($durationBuckets) : 0;
+
         $result = [
             'segments' => [],
             'total_segments' => $totalSegments,
@@ -750,6 +771,20 @@ class MD5PatternCleaner
             }
         }
         $md5StatusMap = $this->db->queryBatch($md5List);
+
+        $avgBitrate = null;
+        $totalBytesForBitrate = 0;
+        $totalDurationForBitrate = 0;
+        foreach ($batchSegments as $idx => $seg) {
+            $r = $segmentResults[$idx] ?? ['success' => false, 'size' => 0];
+            if (!empty($r['success']) && !empty($r['size']) && $r['size'] > 0 && $seg['duration'] > 0) {
+                $totalBytesForBitrate += $r['size'];
+                $totalDurationForBitrate += $seg['duration'];
+            }
+        }
+        if ($totalDurationForBitrate > 0) {
+            $avgBitrate = ($totalBytesForBitrate * 8) / $totalDurationForBitrate;
+        }
 
         foreach ($batchSegments as $idx => $seg) {
             $r = $segmentResults[$idx] ?? ['success' => false, 'md5' => '', 'size' => 0];
@@ -804,6 +839,16 @@ class MD5PatternCleaner
                 } else {
                     $status = 'new_segment';
                     $reason = '新片段(未记录)';
+
+                    // === 启发式检测：即使是新片段，也尝试识别广告 ===
+                    $segSize = $r['size'] ?? null;
+                    $heuristicResult = $this->heuristicCheck($seg, $idx, $totalSegments, $medianDuration, $mostCommonDuration, $mostCommonCount, $minDuration, $maxDuration, $segSize, $avgBitrate);
+                    if ($heuristicResult['is_ad']) {
+                        $isAd = true;
+                        $status = 'heuristic_ad';
+                        $reason = '疑似广告(' . $heuristicResult['reason'] . ')';
+                        $segInfo['heuristic_score'] = $heuristicResult['score'];
+                    }
                 }
 
                 $this->db->record(
@@ -836,7 +881,7 @@ class MD5PatternCleaner
         $result = [
             'segments' => [],
             'total_segments' => $totalSegments,
-            'offset' => (int)$offset,
+            'offset' => 0,
             'batch_size' => 0,
             'has_more' => false,
             'domain' => parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST),
@@ -844,14 +889,14 @@ class MD5PatternCleaner
             'has_end' => $parsed['has_end'],
         ];
 
-        if ($totalSegments === 0 || $offset >= $totalSegments) {
+        if ($totalSegments === 0) {
             return $result;
         }
 
-        // 确定本批次要分析的片段
-        $end = $batchSize > 0 ? min($offset + $batchSize, $totalSegments) : $totalSegments;
+        $batchSize = $maxSegments > 0 ? min($maxSegments, $totalSegments) : $totalSegments;
+        $end = $batchSize;
         $batchSegments = [];
-        for ($i = $offset; $i < $end; $i++) {
+        for ($i = 0; $i < $end; $i++) {
             if (isset($segments[$i])) {
                 $batchSegments[$i] = $segments[$i];
             }
@@ -1192,6 +1237,286 @@ class MD5PatternCleaner
         }
 
         return false;
+    }
+
+    /**
+     * 启发式广告检测 - 单视频深度分析
+     *
+     * 综合多维度特征判断片段是否为广告：
+     * 1. 时长异常（远短于/远长于中位数）
+     * 2. 位置特征（片头/片尾/插播位置）
+     * 3. URL 关键词（ad、advert、pre、mid、post 等）
+     * 4. 大小异常（比特率与正片差异大）
+     * 5. 时长众数偏离（广告往往有独特的时长规律）
+     *
+     * @param array $seg 片段信息 ['uri'=>'', 'duration'=>float, 'index'=>int]
+     * @param int $index 片段索引
+     * @param int $total 总片段数
+     * @param float $medianDuration 时长中位数
+     * @param float $modeDuration 时长众数
+     * @param int $modeCount 众数出现次数
+     * @param float $minDuration 最小时长
+     * @param float $maxDuration 最大时长
+     * @param float|null $segmentSize 片段大小（字节）
+     * @param float|null $avgBitrate 平均比特率
+     * @return array ['is_ad' => bool, 'reason' => string, 'score' => int]
+     */
+    public function heuristicCheck($seg, $index, $total, $medianDuration, $modeDuration, $modeCount, $minDuration, $maxDuration, $segmentSize = null, $avgBitrate = null)
+    {
+        $score = 0;
+        $reasons = [];
+        $duration = $seg['duration'];
+        $uri = $seg['uri'];
+
+        if ($total <= 3 || $medianDuration <= 0) {
+            return ['is_ad' => false, 'reason' => '样本太少', 'score' => 0];
+        }
+
+        // === 规则1: URL 关键词检测 ===
+        $adKeywords = [
+            'ad', 'advert', 'advertisement', 'ads',
+            'pre', 'pre-roll', 'preroll',
+            'mid', 'mid-roll', 'midroll',
+            'post', 'post-roll', 'postroll',
+            'commercial', 'promo', 'promotion',
+            'sponsor', 'sponsored',
+            'banner', 'interstitial',
+            'splash', 'opening_ad',
+            '片头广告', '片中广告', '片尾广告',
+            'gg', 'gg1', 'gg2', 'gg3',
+        ];
+        $uriLower = strtolower($uri);
+        foreach ($adKeywords as $kw) {
+            if (strpos($uriLower, $kw) !== false) {
+                $score += 25;
+                $reasons[] = "URL含关键词[$kw]";
+                break;
+            }
+        }
+
+        // === 规则2: 时长异常检测 ===
+        if ($medianDuration > 0) {
+            $ratio = $duration / $medianDuration;
+
+            if ($ratio < 0.3) {
+                $score += 20;
+                $reasons[] = "时长短(仅{$duration}s,中位数{$medianDuration}s)";
+            } elseif ($ratio < 0.5) {
+                $score += 10;
+                $reasons[] = "时长偏短({$duration}s)";
+            } elseif ($ratio > 2.5) {
+                $score += 15;
+                $reasons[] = "时长远超中位数({$duration}s)";
+            } elseif ($ratio > 1.8) {
+                $score += 8;
+                $reasons[] = "时长偏长({$duration}s)";
+            }
+        }
+
+        // === 规则3: 时长与众数的偏离度 ===
+        if ($modeDuration > 0 && $modeCount > $total * 0.3) {
+            $modeDiffRatio = abs($duration - $modeDuration) / $modeDuration;
+            if ($modeDiffRatio > 0.5 && $duration < $modeDuration) {
+                $score += 10;
+                $reasons[] = "时长偏离众数(众数{$modeDuration}s)";
+            }
+        }
+
+        // === 规则4: 位置特征检测 ===
+        $headThreshold = min(5, (int)($total * 0.05));
+        $tailThreshold = $total - min(5, (int)($total * 0.05));
+
+        if ($index < $headThreshold) {
+            $score += 10;
+            $reasons[] = '片头位置';
+        } elseif ($index >= $tailThreshold) {
+            $score += 8;
+            $reasons[] = '片尾位置';
+        }
+
+        // === 规则5: 片段大小/比特率异常 ===
+        if ($segmentSize !== null && $segmentSize > 0 && $duration > 0 && $avgBitrate !== null && $avgBitrate > 0) {
+            $bitrate = ($segmentSize * 8) / $duration;
+            $bitrateRatio = $bitrate / $avgBitrate;
+
+            if ($bitrateRatio < 0.4) {
+                $score += 15;
+                $reasons[] = "比特率偏低(" . round($bitrate/1024, 0) . "kbps)";
+            } elseif ($bitrateRatio < 0.6) {
+                $score += 8;
+                $reasons[] = "比特率略低";
+            } elseif ($bitrateRatio > 2.0) {
+                $score += 10;
+                $reasons[] = "比特率偏高";
+            }
+        }
+
+        // === 规则6: 极短片段（<2秒）通常是广告片头/片尾 ===
+        if ($duration < 2.0 && $total > 10) {
+            $score += 15;
+            $reasons[] = "极短片段({$duration}s)";
+        }
+
+        $isAd = ($score >= 30);
+
+        return [
+            'is_ad' => $isAd,
+            'reason' => implode('+', $reasons) ?: '正常',
+            'score' => $score,
+        ];
+    }
+
+    /**
+     * 深度分析增强版：聚类分析 + 比特率分析 + 广告集群识别
+     *
+     * 对所有已分析的片段进行二次深度分析，识别：
+     * - 连续广告片段集群（插播广告通常是连续的多个片段）
+     * - 比特率异常区间
+     * - 时长模式突变点
+     *
+     * @param array $allSegments 所有已分析的片段列表
+     * @param int $totalSegments 总片段数
+     * @return array [
+     *   'ad_clusters' => [[start, end, count, reason], ...],
+     *   'refined_segments' => [...],
+     *   'analysis_summary' => string,
+     * ]
+     */
+    public function deepClusterAnalyze($allSegments, $totalSegments)
+    {
+        if (empty($allSegments)) {
+            return ['ad_clusters' => [], 'refined_segments' => $allSegments, 'analysis_summary' => '无数据'];
+        }
+
+        $segments = $allSegments;
+        $adClusters = [];
+        $currentCluster = null;
+
+        // === 步骤1: 识别连续广告片段集群 ===
+        foreach ($segments as $i => $seg) {
+            $isAd = !empty($seg['is_ad']);
+
+            if ($isAd) {
+                if ($currentCluster === null) {
+                    $currentCluster = [
+                        'start' => $seg['index'],
+                        'end' => $seg['index'],
+                        'count' => 1,
+                        'total_duration' => $seg['duration'],
+                    ];
+                } else {
+                    $currentCluster['end'] = $seg['index'];
+                    $currentCluster['count']++;
+                    $currentCluster['total_duration'] += $seg['duration'];
+                }
+            } else {
+                if ($currentCluster !== null) {
+                    if ($currentCluster['count'] >= 2) {
+                        $currentCluster['reason'] = "连续{$currentCluster['count']}段广告集群(" . round($currentCluster['total_duration'], 1) . "s)";
+                        $adClusters[] = $currentCluster;
+                    }
+                    $currentCluster = null;
+                }
+            }
+        }
+        if ($currentCluster !== null && $currentCluster['count'] >= 2) {
+            $currentCluster['reason'] = "连续{$currentCluster['count']}段广告集群(" . round($currentCluster['total_duration'], 1) . "s)";
+            $adClusters[] = $currentCluster;
+        }
+
+        // === 步骤2: 基于集群扩展识别（如果集群周围的片段时长相似，可能也是广告）===
+        $validDurations = [];
+        foreach ($segments as $seg) {
+            if (!empty($seg['success']) && $seg['duration'] > 0) {
+                $validDurations[] = $seg['duration'];
+            }
+        }
+        if (count($validDurations) > 5) {
+            sort($validDurations);
+            $medianDur = $validDurations[floor(count($validDurations) / 2)];
+
+            foreach ($adClusters as $cluster) {
+                $clusterAvgDuration = $cluster['total_duration'] / $cluster['count'];
+                $beforeIdx = $cluster['start'] - 1;
+                $afterIdx = $cluster['end'] + 1;
+
+                if ($beforeIdx >= 0 && isset($segments[$beforeIdx])) {
+                    $beforeSeg = $segments[$beforeIdx];
+                    if (empty($beforeSeg['is_ad']) && $beforeSeg['duration'] > 0) {
+                        $durDiff = abs($beforeSeg['duration'] - $clusterAvgDuration) / $clusterAvgDuration;
+                        if ($durDiff < 0.2 && $beforeSeg['duration'] < $medianDur * 0.6) {
+                            $segments[$beforeIdx]['is_ad'] = true;
+                            $segments[$beforeIdx]['status'] = 'cluster_extended';
+                            $segments[$beforeIdx]['reason'] = '广告集群扩展(前邻片)';
+                        }
+                    }
+                }
+
+                if ($afterIdx < count($segments) && isset($segments[$afterIdx])) {
+                    $afterSeg = $segments[$afterIdx];
+                    if (empty($afterSeg['is_ad']) && $afterSeg['duration'] > 0) {
+                        $durDiff = abs($afterSeg['duration'] - $clusterAvgDuration) / $clusterAvgDuration;
+                        if ($durDiff < 0.2 && $afterSeg['duration'] < $medianDur * 0.6) {
+                            $segments[$afterIdx]['is_ad'] = true;
+                            $segments[$afterIdx]['status'] = 'cluster_extended';
+                            $segments[$afterIdx]['reason'] = '广告集群扩展(后邻片)';
+                        }
+                    }
+                }
+            }
+        }
+
+        // === 步骤3: 比特率深度分析 ===
+        $segmentSizes = [];
+        foreach ($segments as $seg) {
+            if (!empty($seg['success']) && !empty($seg['size']) && $seg['size'] > 0 && $seg['duration'] > 0) {
+                $bitrate = ($seg['size'] * 8) / $seg['duration'];
+                $segmentSizes[] = ['index' => $seg['index'], 'bitrate' => $bitrate, 'size' => $seg['size']];
+            }
+        }
+
+        if (count($segmentSizes) > 5) {
+            $bitrates = array_column($segmentSizes, 'bitrate');
+            sort($bitrates);
+            $medianBitrate = $bitrates[floor(count($bitrates) / 2)];
+
+            foreach ($segments as $i => $seg) {
+                if (!empty($seg['is_ad'])) continue;
+                if (empty($seg['success']) || empty($seg['size']) || $seg['size'] <= 0 || $seg['duration'] <= 0) continue;
+
+                $bitrate = ($seg['size'] * 8) / $seg['duration'];
+                $bitrateRatio = $bitrate / $medianBitrate;
+
+                if ($bitrateRatio < 0.35 && $seg['duration'] < 30) {
+                    $segments[$i]['is_ad'] = true;
+                    $segments[$i]['status'] = 'bitrate_anomaly';
+                    $segments[$i]['reason'] = '比特率异常低(' . round($bitrate/1024, 0) . 'kbps)';
+                }
+            }
+        }
+
+        // === 步骤4: 统计摘要 ===
+        $adCount = 0;
+        $adDuration = 0;
+        $totalDuration = 0;
+        foreach ($segments as $seg) {
+            $totalDuration += $seg['duration'];
+            if (!empty($seg['is_ad'])) {
+                $adCount++;
+                $adDuration += $seg['duration'];
+            }
+        }
+
+        $summary = "共检测到 {$adCount} 个广告片段，约 " . round($adDuration, 1) . "秒，占总时长 " . ($totalDuration > 0 ? round($adDuration / $totalDuration * 100, 1) : 0) . "%；发现 " . count($adClusters) . " 个广告集群。";
+
+        return [
+            'ad_clusters' => $adClusters,
+            'refined_segments' => $segments,
+            'analysis_summary' => $summary,
+            'ad_count' => $adCount,
+            'ad_duration' => $adDuration,
+            'total_duration' => $totalDuration,
+        ];
     }
 
     /**
