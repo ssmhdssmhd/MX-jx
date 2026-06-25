@@ -1,6 +1,6 @@
 <?php
 /**
- * 沫兮万能解析 - 管理后台（单文件集成版 v4.5.2）
+ * 沫兮万能解析 - 管理后台（单文件集成版 v4.5.3）
  * ------------------------------------------------------------
  * 原文件：admin.php + admin_tpl.php + admin_main.php + admin_style.css
  * 现全部整合到此文件中，便于部署与维护
@@ -1547,7 +1547,7 @@ function renderLoginPage($loginError = '') {
     <div class="login-box">
         <div class="login-icon">🎬</div>
         <h1>沫兮万能解析管理后台</h1>
-        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.5.2</div>
+        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.5.3</div>
         <?php if (!empty($loginError)): ?><div class="err"><?php echo htmlspecialchars($loginError); ?></div><?php endif; ?>
         <form method="post">
             <input type="hidden" name="action" value="login">
@@ -1815,7 +1815,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <header class="admin-header">
         <div>
             <h1>🎬 沫兮万能解析管理后台</h1>
-            <div class="sub">v4.5.2 · NoAd 去广告 + 智能线路切换（单文件版）</div>
+            <div class="sub">v4.5.3 · NoAd 去广告 + 智能线路切换（单文件版）</div>
         </div>
         <div style="display:flex;gap:12px;align-items:center;font-size:13px;flex-wrap:wrap">
             <span>NoAd <?php echo !empty($noadConfig['noad_enabled']) ? '<span class="badge badge-green">已启用</span>' : '<span class="badge badge-red">已关闭</span>'; ?></span>
