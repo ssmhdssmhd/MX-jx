@@ -244,7 +244,7 @@ $ajaxEarlyWhitelist = [
     'ajax_list_algorithms', 'ajax_toggle_algo',
     'ajax_reload_algorithms', 'ajax_test_algorithms',
     'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
-    'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist',
+    'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist', 'ajax_md5_deep_analyze',
     'ajax_feat_test', 'ajax_feat_stats', 'ajax_feat_learn', 'ajax_feat_mark',
     'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
     'ajax_ad_snippet_fetch',
@@ -643,6 +643,47 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             }
             $md5DB->addToWhitelist($md5Hash, '后台人工添加');
             echo json_encode(['code' => 200, 'md5' => $md5Hash, 'added' => true], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        if ($ajaxEarlyAction === 'ajax_md5_deep_analyze') {
+            // === MD5 深度分析：获取每个片段的详细信息 ===
+            $videoUrl = trim($_POST['video_url'] ?? '');
+            if ($videoUrl === '' || !filter_var($videoUrl, FILTER_VALIDATE_URL)) {
+                echo json_encode(['code' => 400, 'error' => '请输入有效的视频 URL'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // 解析出 M3U8 URL
+            $m3u8Url = $videoUrl;
+            if (stripos($videoUrl, '.m3u8') === false) {
+                // 如果不是直接的 m3u8 URL，尝试从页面解析
+                $m3u8Url = trim($_POST['m3u8_url'] ?? '');
+                if ($m3u8Url === '') {
+                    echo json_encode(['code' => 400, 'error' => '请提供 M3U8 URL 或视频页面地址'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+            }
+
+            // 下载 M3U8
+            $m3u8 = MD5PatternCleaner::downloadM3U8($m3u8Url, false);
+            if ($m3u8 === false) {
+                echo json_encode(['code' => 500, 'error' => '无法下载 M3U8，请检查 URL 是否正确'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // 执行深度分析
+            $result = $md5->deepAnalyze($m3u8, $m3u8Url);
+
+            echo json_encode([
+                'code' => 200,
+                'video_url' => $videoUrl,
+                'm3u8_url' => $m3u8Url,
+                'segments' => $result['segments'],
+                'stats' => $result['stats'],
+                'clean_m3u8' => $result['clean_m3u8'],
+                'domain' => $result['domain'],
+            ], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
@@ -1698,8 +1739,59 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 $md5Clean_ac = $mc_ac['md5_db_cleanup_days'] ?? 30;
                 $md5Debug_ac = $mc_ac['md5_debug'] ?? false;
             ?>
+            <!-- 深度分析输入区 -->
+            <div class="panel" style="margin-bottom:20px;border:2px solid #4f46e5">
+                <h3 style="margin-top:0;color:#4f46e5">🔬 MD5 深度分析 - 实时 TS 内容检测</h3>
+                <p style="color:#666;font-size:13px;margin:6px 0">
+                    <b>功能：</b>输入视频链接，自动下载并分析每个 TS 片段的 MD5 指纹，实时显示广告/正片判断结果，生成去广告后的完整链接。
+                </p>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
+                    <div style="flex:2;min-width:300px">
+                        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">视频/M3U8 URL</label>
+                        <input type="text" id="deep_video_url" placeholder="https://example.com/video.m3u8 或视频页面地址" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
+                    </div>
+                    <div style="flex:1;min-width:150px">
+                        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">M3U8 URL（可选）</label>
+                        <input type="text" id="deep_m3u8_url" placeholder="直接指定m3u8地址" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
+                    </div>
+                    <div style="flex:0">
+                        <button type="button" onclick="md5DeepAnalyze()" style="padding:10px 24px;font-size:14px;background:#4f46e5;color:white;border:none;border-radius:6px;cursor:pointer">🚀 开始深度分析</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分析结果展示区 -->
+            <div id="deep_analysis_result" style="display:none;margin-bottom:20px">
+                <div class="panel" style="border:1px solid #e5e7eb">
+                    <h4 style="margin-top:0;color:#059669">📊 分析统计</h4>
+                    <div id="deep_stats" style="display:flex;gap:20px;flex-wrap:wrap;font-size:14px"></div>
+                </div>
+                <div class="panel" style="border:1px solid #e5e7eb;margin-top:12px">
+                    <h4 style="margin-top:0;color:#dc2626">🚫 广告片段（将被删除）</h4>
+                    <div id="deep_ad_segments" style="max-height:300px;overflow-y:auto"></div>
+                </div>
+                <div class="panel" style="border:1px solid #e5e7eb;margin-top:12px">
+                    <h4 style="margin-top:0;color:#059669">✅ 正片片段（保留）</h4>
+                    <div id="deep_content_segments" style="max-height:300px;overflow-y:auto"></div>
+                </div>
+                <div class="panel" style="border:1px solid #4f46e5;margin-top:12px;background:#f0f9ff">
+                    <h4 style="margin-top:0;color:#4f46e5">🔗 去广告后的 M3U8 链接（完整域名）</h4>
+                    <div style="display:flex;gap:10px;align-items:flex-start;margin-top:8px">
+                        <textarea id="deep_clean_m3u8" readonly style="flex:1;height:120px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>
+                        <button type="button" onclick="copyDeepM3u8()" style="padding:8px 16px;background:#059669;color:white;border:none;border-radius:4px;cursor:pointer;white-space:nowrap">📋 复制</button>
+                    </div>
+                    <div style="margin-top:8px;font-size:12px;color:#666">
+                        <b>域名：</b><span id="deep_domain"></span>
+                    </div>
+                </div>
+            </div>
+            <div id="deep_loading" style="display:none;text-align:center;padding:30px;color:#666">
+                <div style="font-size:16px">🧪 正在下载并分析 TS 片段，请稍候...</div>
+                <div style="font-size:13px;margin-top:8px;color:#888">这可能需要几秒钟时间</div>
+            </div>
+
             <div class="panel">
-                <h3 style="margin-top:0;color:#4f46e5">🎯 MD5 指纹去广告 — 分析与管理</h3>
+                <h3 style="margin-top:0;color:#4f46e5">🎯 MD5 指纹去广告 — 参数配置</h3>
                 <p style="color:#666;font-size:13px;margin:6px 0">
                     <b>原理：</b>广告片段会在不同视频中重复出现（MD5 相同），而正片内容是唯一的。
                     通过统计 TS 片段的 MD5 指纹出现频率，自动识别并删除广告片段。
@@ -5429,6 +5521,118 @@ function md5ResetDefault() {
     if (resultEl) resultEl.textContent = resultText;
     if (resultEl2) resultEl2.textContent = resultText;
     if (resultEl3) resultEl3.textContent = resultText;
+}
+// ===== MD5 深度分析：实时检测 TS 内容 =====
+function md5DeepAnalyze() {
+    var videoUrl = document.getElementById('deep_video_url').value.trim();
+    var m3u8Url = document.getElementById('deep_m3u8_url').value.trim();
+
+    if (!videoUrl && !m3u8Url) {
+        alert('请输入视频 URL 或 M3U8 地址');
+        return;
+    }
+
+    var resultDiv = document.getElementById('deep_analysis_result');
+    var loadingDiv = document.getElementById('deep_loading');
+
+    resultDiv.style.display = 'none';
+    loadingDiv.style.display = 'block';
+
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_deep_analyze');
+    if (videoUrl) formData.append('video_url', videoUrl);
+    if (m3u8Url) formData.append('m3u8_url', m3u8Url);
+
+    fetch(window.location.href, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loadingDiv.style.display = 'none';
+            if (data.code !== 200) {
+                alert('分析失败：' + (data.error || '未知错误'));
+                return;
+            }
+
+            // 显示结果
+            resultDiv.style.display = 'block';
+
+            // 更新统计
+            var stats = data.stats || {};
+            var statsDiv = document.getElementById('deep_stats');
+            statsDiv.innerHTML = ''
+                + '<div style="padding:8px 16px;background:#f3f4f6;border-radius:6px"><b>总片段：</b>' + (stats.total_segments || 0) + '</div>'
+                + '<div style="padding:8px 16px;background:#fef2f2;border-radius:6px;color:#dc2626"><b>广告片段：</b>' + (stats.ad_segments || 0) + '</div>'
+                + '<div style="padding:8px 16px;background:#f0fdf4;border-radius:6px;color:#059669"><b>正片片段：</b>' + (stats.content_segments || 0) + '</div>';
+
+            // 更新域名
+            document.getElementById('deep_domain').textContent = data.domain || '';
+
+            // 更新广告片段列表
+            var adSegs = data.segments.filter(function(s) { return s.is_ad; });
+            var adSegsDiv = document.getElementById('deep_ad_segments');
+            if (adSegs.length === 0) {
+                adSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">未检测到广告片段</div>';
+            } else {
+                var adTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+                    + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">原因</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
+                adSegs.forEach(function(s, i) {
+                    adTable += '<tr style="border-bottom:1px solid #e5e7eb">'
+                        + '<td style="padding:6px 8px">' + s.index + '</td>'
+                        + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
+                        + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
+                        + '<td style="padding:6px 8px;color:#dc2626">' + (s.reason || '') + '</td>'
+                        + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
+                        + '</tr>';
+                });
+                adTable += '</table>';
+                adSegsDiv.innerHTML = adTable;
+            }
+
+            // 更新正片片段列表
+            var contentSegs = data.segments.filter(function(s) { return !s.is_ad; });
+            var contentSegsDiv = document.getElementById('deep_content_segments');
+            if (contentSegs.length === 0) {
+                contentSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">无正片片段</div>';
+            } else {
+                var contentTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+                    + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">状态</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
+                contentSegs.forEach(function(s) {
+                    contentTable += '<tr style="border-bottom:1px solid #e5e7eb">'
+                        + '<td style="padding:6px 8px">' + s.index + '</td>'
+                        + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
+                        + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
+                        + '<td style="padding:6px 8px;color:#059669">' + (s.reason || s.status || '') + '</td>'
+                        + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
+                        + '</tr>';
+                });
+                contentTable += '</table>';
+                contentSegsDiv.innerHTML = contentTable;
+            }
+
+            // 更新清理后的 M3U8
+            document.getElementById('deep_clean_m3u8').value = data.clean_m3u8 || '';
+
+        })
+        .catch(function(e) {
+            loadingDiv.style.display = 'none';
+            alert('请求失败：' + e.message);
+        });
+}
+// 复制清理后的 M3U8
+function copyDeepM3u8() {
+    var m3u8Content = document.getElementById('deep_clean_m3u8').value;
+    if (!m3u8Content) {
+        alert('没有可复制的内容');
+        return;
+    }
+    navigator.clipboard.writeText(m3u8Content).then(function() {
+        alert('已复制到剪贴板');
+    }).catch(function() {
+        // 降级方案
+        var textarea = document.getElementById('deep_clean_m3u8');
+        textarea.select();
+        document.execCommand('copy');
+        alert('已复制到剪贴板');
+    });
 }
 // ===== MD5 指纹去广告：页面访问时触发每日检测 =====
 (function() {
