@@ -245,7 +245,7 @@ $ajaxEarlyWhitelist = [
     'ajax_reload_algorithms', 'ajax_test_algorithms',
     'ajax_ruyi_test', 'ajax_ruyi_auto_optimize',
     'ajax_md5_test', 'ajax_md5_stats', 'ajax_md5_mark', 'ajax_md5_whitelist', 'ajax_md5_deep_analyze',
-    'ajax_md5_diagnose', 'ajax_md5_fetch_segment', 'ajax_md5_manual_mark', 'ajax_md5_deep_cluster',
+    'ajax_md5_diagnose', 'ajax_md5_fetch_segment', 'ajax_md5_manual_mark', 'ajax_md5_deep_cluster', 'ajax_md5_parse_m3u8',
     'ajax_feat_test', 'ajax_feat_stats', 'ajax_feat_learn', 'ajax_feat_mark',
     'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
     'ajax_ad_snippet_fetch',
@@ -552,7 +552,8 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         || $ajaxEarlyAction === 'ajax_md5_diagnose'
         || $ajaxEarlyAction === 'ajax_md5_fetch_segment'
         || $ajaxEarlyAction === 'ajax_md5_manual_mark'
-        || $ajaxEarlyAction === 'ajax_md5_deep_cluster') {
+        || $ajaxEarlyAction === 'ajax_md5_deep_cluster'
+        || $ajaxEarlyAction === 'ajax_md5_parse_m3u8') {
         // === MD5 指纹去广告：测试 / 统计 / 标记 ===
         require_once __DIR__ . '/algorithms/md5_pattern_cleaner.php';
         $md5 = new MD5PatternCleaner();
@@ -652,8 +653,73 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             exit;
         }
 
+        if ($ajaxEarlyAction === 'ajax_md5_parse_m3u8') {
+            @set_time_limit(30);
+
+            $videoUrl = trim($_POST['video_url'] ?? '');
+            $m3u8UrlInput = trim($_POST['m3u8_url'] ?? '');
+
+            if ($videoUrl === '' && $m3u8UrlInput === '') {
+                echo json_encode(['code' => 400, 'error' => '请输入视频 URL 或 M3U8 地址'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $targetUrl = $m3u8UrlInput ?: $videoUrl;
+
+            if (!filter_var($targetUrl, FILTER_VALIDATE_URL)) {
+                echo json_encode(['code' => 400, 'error' => 'URL 格式不正确'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $resolved = MD5PatternCleaner::resolveM3U8FromUrl($targetUrl);
+            if ($resolved === false) {
+                $errorMsg = '无法获取 M3U8 内容。';
+                if (stripos($targetUrl, '.m3u8') === false) {
+                    $errorMsg .= ' 该链接不是直接的 M3U8 地址，且未能从页面中解析出播放地址。';
+                } else {
+                    $errorMsg .= ' 可能的原因：URL 无效、网络连接失败、服务器拒绝访问。';
+                }
+                echo json_encode(['code' => 500, 'error' => $errorMsg], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            $m3u8Content = $resolved['content'];
+            $finalM3u8Url = $resolved['final_url'] ?? $targetUrl;
+
+            $parsed = $md5->parseM3U8($m3u8Content);
+            $segmentCount = count($parsed['segments']);
+            $isMaster = !empty($parsed['is_master']);
+
+            $cacheKey = md5($targetUrl);
+            @session_start();
+            $_SESSION['md5_deep_m3u8_' . $cacheKey] = [
+                'content' => $m3u8Content,
+                'url' => $finalM3u8Url,
+                'time' => time(),
+            ];
+            session_write_close();
+
+            $totalDuration = 0;
+            foreach ($parsed['segments'] as $seg) {
+                $totalDuration += $seg['duration'];
+            }
+
+            echo json_encode([
+                'code' => 200,
+                'success' => true,
+                'm3u8_url' => $finalM3u8Url,
+                'cache_key' => $cacheKey,
+                'segment_count' => $segmentCount,
+                'total_duration' => round($totalDuration, 1),
+                'is_master' => $isMaster,
+                'master_variants' => $parsed['master_variants'] ?? [],
+                'has_end' => $parsed['has_end'],
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        // === MD5 深度分析：分片批量分析（避免超时） ===
         if ($ajaxEarlyAction === 'ajax_md5_deep_analyze') {
-            // === MD5 深度分析：分片批量分析（避免超时） ===
             @set_time_limit(0);
             @ignore_user_abort(true);
             @ini_set('memory_limit', '256M');
@@ -678,9 +744,9 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
 
             // 不同模式的每批大小
             $batchSizes = [
-                'quick' => 10,       // 快速：每批10段，只分析前30段
-                'standard' => 15,    // 标准：每批15段，分析全部
-                'slow' => 6,         // 慢速：每批6段，更稳定，分析全部
+                'quick' => 8,        // 快速：每批8段，只分析前30段
+                'standard' => 10,    // 标准：每批10段，分析全部
+                'slow' => 5,         // 慢速：每批5段，更稳定，分析全部
             ];
             $batchSize = isset($batchSizes[$scanMode]) ? $batchSizes[$scanMode] : 15;
             $quickModeLimit = ($scanMode === 'quick') ? 30 : 0;
@@ -2033,9 +2099,9 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <div style="flex:1;min-width:150px">
                         <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">扫描模式</label>
                         <select id="deep_scan_mode" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
-                            <option value="quick">⚡ 快速（前30段·分片）</option>
-                            <option value="standard" selected>📊 标准（全部分片·每批15段）</option>
-                            <option value="slow">🐢 慢速（全部分片·每批6段·稳定）</option>
+                            <option value="quick">⚡ 快速（前30段·每批8段）</option>
+                            <option value="standard" selected>📊 标准（全部·每批10段）</option>
+                            <option value="slow">🐢 慢速（全部·每批5段·稳定）</option>
                         </select>
                     </div>
                     <div style="flex:0">
@@ -5917,10 +5983,56 @@ function md5DeepAnalyze() {
 
     btn.disabled = true;
     btn.style.opacity = '0.6';
-    btn.textContent = '⏳ 分析中...';
+    btn.textContent = '⏳ 解析 M3U8...';
 
-    // 开始分片加载
-    deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, 0, '');
+    deepParseM3U8(videoUrl, m3u8Url, scanMode);
+}
+
+function deepParseM3U8(videoUrl, m3u8Url, scanMode) {
+    var errorDiv = document.getElementById('deep_error');
+    var progressDiv = document.getElementById('deep_progress');
+
+    var formData = new FormData();
+    formData.append('action', 'ajax_md5_parse_m3u8');
+    if (videoUrl) formData.append('video_url', videoUrl);
+    if (m3u8Url) formData.append('m3u8_url', m3u8Url);
+
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 45000);
+
+    fetch(window.location.href, { method: 'POST', body: formData, signal: controller.signal })
+        .then(function(r) {
+            clearTimeout(timeoutId);
+            var contentType = r.headers.get('content-type') || '';
+            if (contentType.indexOf('application/json') === -1) {
+                return r.text().then(function(text) {
+                    throw new Error('服务器返回了非 JSON 内容（' + (text.substring(0, 100) || '空') + '）');
+                });
+            }
+            return r.json();
+        })
+        .then(function(data) {
+            if (data.code !== 200) {
+                throw new Error(data.error || data.msg || '未知错误');
+            }
+
+            _deepCacheKey = data.cache_key || '';
+            _deepM3u8Url = data.m3u8_url || '';
+            _deepTotal = data.segment_count || 0;
+
+            var btn = document.getElementById('deep_analyze_btn');
+            btn.textContent = '⏳ 分析中... (0/' + _deepTotal + ')';
+
+            updateProgress(0, _deepTotal, 'M3U8 解析成功，共 ' + _deepTotal + ' 段，开始分析...');
+
+            setTimeout(function() {
+                deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, 0, _deepCacheKey);
+            }, 300);
+        })
+        .catch(function(e) {
+            clearTimeout(timeoutId);
+            handleDeepAnalyzeError('M3U8 解析失败：' + e.message);
+        });
 }
 
 function deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, offset, cacheKey) {
@@ -5938,16 +6050,7 @@ function deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, offset, cacheKey) {
     formData.append('offset', offset);
     if (cacheKey) formData.append('cache_key', cacheKey);
 
-    fetch(window.location.href, { method: 'POST', body: formData })
-        .then(function(r) {
-            var contentType = r.headers.get('content-type') || '';
-            if (contentType.indexOf('application/json') === -1) {
-                return r.text().then(function(text) {
-                    throw new Error('服务器返回了非 JSON 内容（' + (text.substring(0, 100) || '空') + '）');
-                });
-            }
-            return r.json();
-        })
+    deepFetchWithRetry(formData, 2, 90000)
         .then(function(data) {
             if (data.code !== 200) {
                 throw new Error(data.error || data.msg || '未知错误');
@@ -5982,15 +6085,65 @@ function deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, offset, cacheKey) {
             }
         })
         .catch(function(e) {
-            _deepAnalyzeRunning = false;
-            progressDiv.style.display = 'none';
-            loadingDiv.style.display = 'none';
-            btn.disabled = false;
-            btn.style.opacity = '1';
-            btn.textContent = '🚀 开始深度分析';
-            errorDiv.style.display = 'block';
-            errorDiv.textContent = '❌ 请求失败：' + e.message;
+            handleDeepAnalyzeError('分析失败：' + e.message);
         });
+}
+
+function deepFetchWithRetry(formData, maxRetries, timeoutMs) {
+    return new Promise(function(resolve, reject) {
+        var attempt = 0;
+
+        function tryFetch() {
+            var controller = new AbortController();
+            var timeoutId = setTimeout(function() { controller.abort(); }, timeoutMs);
+
+            fetch(window.location.href, { method: 'POST', body: formData, signal: controller.signal })
+                .then(function(r) {
+                    clearTimeout(timeoutId);
+                    var contentType = r.headers.get('content-type') || '';
+                    if (contentType.indexOf('application/json') === -1) {
+                        return r.text().then(function(text) {
+                            throw new Error('服务器返回了非 JSON 内容（upstream request timeout）');
+                        });
+                    }
+                    return r.json();
+                })
+                .then(function(data) {
+                    resolve(data);
+                })
+                .catch(function(e) {
+                    clearTimeout(timeoutId);
+                    attempt++;
+                    if (attempt < maxRetries) {
+                        setTimeout(tryFetch, 1000 * attempt);
+                    } else {
+                        reject(e);
+                    }
+                });
+        }
+
+        tryFetch();
+    });
+}
+
+function handleDeepAnalyzeError(errorMsg) {
+    _deepAnalyzeRunning = false;
+    var errorDiv = document.getElementById('deep_error');
+    var progressDiv = document.getElementById('deep_progress');
+    var loadingDiv = document.getElementById('deep_loading');
+    var btn = document.getElementById('deep_analyze_btn');
+
+    if (progressDiv) progressDiv.style.display = 'none';
+    if (loadingDiv) loadingDiv.style.display = 'none';
+    if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        btn.textContent = '🚀 开始深度分析';
+    }
+    if (errorDiv) {
+        errorDiv.style.display = 'block';
+        errorDiv.textContent = '❌ ' + errorMsg;
+    }
 }
 
 function updateProgress(percent, analyzed, text) {

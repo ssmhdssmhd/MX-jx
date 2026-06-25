@@ -1115,17 +1115,16 @@ class MD5PatternCleaner
      * @param array $proxyPool
      * @return array|false 成功返回 ['content' => string, 'http_code' => int]，失败返回 false
      */
-    public static function downloadM3U8Ex($url, $useProxy = false, $proxyPool = [])
+    public static function downloadM3U8Ex($url, $useProxy = false, $proxyPool = [], $timeout = 15)
     {
         if (!function_exists('curl_init')) return false;
 
-        $maxRetries = 3;
+        $maxRetries = 2;
         $lastError = '';
         $lastHttpCode = 0;
 
         $userAgents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
         ];
 
@@ -1136,7 +1135,7 @@ class MD5PatternCleaner
 
         for ($try = 0; $try < $maxRetries; $try++) {
             if ($try > 0) {
-                usleep(300000 * $try + mt_rand(0, 200000));
+                usleep(100000 * $try + mt_rand(0, 100000));
             }
 
             $ch = curl_init($url);
@@ -1144,10 +1143,11 @@ class MD5PatternCleaner
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
             curl_setopt($ch, CURLOPT_ENCODING, 'gzip,deflate');
             curl_setopt($ch, CURLOPT_USERAGENT, $userAgents[$try % count($userAgents)]);
+            curl_setopt($ch, CURLOPT_NOSIGNAL, 1);
 
             $headers = [
                 'Accept: */*',
