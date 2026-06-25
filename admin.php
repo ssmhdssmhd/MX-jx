@@ -650,36 +650,45 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         if ($ajaxEarlyAction === 'ajax_md5_deep_analyze') {
             // === MD5 深度分析：获取每个片段的详细信息 ===
             $videoUrl = trim($_POST['video_url'] ?? '');
-            if ($videoUrl === '' || !filter_var($videoUrl, FILTER_VALIDATE_URL)) {
-                echo json_encode(['code' => 400, 'error' => '请输入有效的视频 URL'], JSON_UNESCAPED_UNICODE);
+            $m3u8UrlInput = trim($_POST['m3u8_url'] ?? '');
+
+            if ($videoUrl === '' && $m3u8UrlInput === '') {
+                echo json_encode(['code' => 400, 'error' => '请输入视频 URL 或 M3U8 地址'], JSON_UNESCAPED_UNICODE);
                 exit;
             }
 
-            // 解析出 M3U8 URL
-            $m3u8Url = $videoUrl;
-            if (stripos($videoUrl, '.m3u8') === false) {
-                // 如果不是直接的 m3u8 URL，尝试从页面解析
-                $m3u8Url = trim($_POST['m3u8_url'] ?? '');
-                if ($m3u8Url === '') {
-                    echo json_encode(['code' => 400, 'error' => '请提供 M3U8 URL 或视频页面地址'], JSON_UNESCAPED_UNICODE);
-                    exit;
+            $targetUrl = $m3u8UrlInput ?: $videoUrl;
+
+            if (!filter_var($targetUrl, FILTER_VALIDATE_URL)) {
+                echo json_encode(['code' => 400, 'error' => 'URL 格式不正确，请输入完整的 http:// 或 https:// 地址'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            // 使用智能解析：自动从视频页或直接 m3u8 获取内容
+            $resolved = MD5PatternCleaner::resolveM3U8FromUrl($targetUrl);
+            if ($resolved === false) {
+                $errorMsg = '无法获取 M3U8 内容。';
+                if (stripos($targetUrl, '.m3u8') === false) {
+                    $errorMsg .= ' 该链接不是直接的 M3U8 地址，且未能从页面中解析出播放地址。';
+                    $errorMsg .= ' 建议直接提供 .m3u8 结尾的播放链接。';
+                } else {
+                    $errorMsg .= ' 可能的原因：URL 无效、网络连接失败、服务器拒绝访问、或需要特定的 Referer/Cookie。';
                 }
-            }
-
-            // 下载 M3U8
-            $m3u8 = MD5PatternCleaner::downloadM3U8($m3u8Url, false);
-            if ($m3u8 === false) {
-                echo json_encode(['code' => 500, 'error' => '无法下载 M3U8，请检查 URL 是否正确'], JSON_UNESCAPED_UNICODE);
+                $errorMsg .= '（已尝试 3 次重试 + 多种 User-Agent）';
+                echo json_encode(['code' => 500, 'error' => $errorMsg], JSON_UNESCAPED_UNICODE);
                 exit;
             }
+
+            $m3u8Content = $resolved['content'];
+            $finalM3u8Url = $resolved['final_url'] ?? $targetUrl;
 
             // 执行深度分析
-            $result = $md5->deepAnalyze($m3u8, $m3u8Url);
+            $result = $md5->deepAnalyze($m3u8Content, $finalM3u8Url);
 
             echo json_encode([
                 'code' => 200,
                 'video_url' => $videoUrl,
-                'm3u8_url' => $m3u8Url,
+                'm3u8_url' => $finalM3u8Url,
                 'segments' => $result['segments'],
                 'stats' => $result['stats'],
                 'clean_m3u8' => $result['clean_m3u8'],

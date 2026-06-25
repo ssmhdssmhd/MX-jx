@@ -853,34 +853,192 @@ class MD5PatternCleaner
     // ============== 辅助静态方法（供后台调用） ==============
 
     /**
-     * 从 M3U8 URL 下载原始内容
+     * 从 M3U8 URL 下载原始内容（增强版：完整请求头 + 自动重试）
+     *
+     * @param string $url
+     * @param bool $useProxy
+     * @param array $proxyPool
+     * @return string|false 成功返回内容字符串，失败返回 false
      */
     public static function downloadM3U8($url, $useProxy = false, $proxyPool = [])
     {
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        $result = self::downloadM3U8Ex($url, $useProxy, $proxyPool);
+        return $result ? $result['content'] : false;
+    }
 
-        if ($useProxy && !empty($proxyPool)) {
-            $proxy = $proxyPool[array_rand($proxyPool)];
-            if (strpos($proxy, '://') !== false) {
-                curl_setopt($ch, CURLOPT_PROXY, $proxy);
-            } else {
-                curl_setopt($ch, CURLOPT_PROXY, 'http://' . $proxy);
+    /**
+     * 从 M3U8 URL 下载原始内容（增强版，返回详细信息）
+     *
+     * @param string $url
+     * @param bool $useProxy
+     * @param array $proxyPool
+     * @return array|false 成功返回 ['content' => string, 'http_code' => int]，失败返回 false
+     */
+    public static function downloadM3U8Ex($url, $useProxy = false, $proxyPool = [])
+    {
+        if (!function_exists('curl_init')) return false;
+
+        $maxRetries = 3;
+        $lastError = '';
+        $lastHttpCode = 0;
+
+        $userAgents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+        ];
+
+        $parsed = parse_url($url);
+        $referer = isset($parsed['scheme']) && isset($parsed['host'])
+            ? $parsed['scheme'] . '://' . $parsed['host'] . '/'
+            : '';
+
+        for ($try = 0; $try < $maxRetries; $try++) {
+            if ($try > 0) {
+                usleep(300000 * $try + mt_rand(0, 200000));
             }
-            if (preg_match('/([^:]+):([^@]+)@(.+)/', $proxy, $m)) {
-                curl_setopt($ch, CURLOPT_PROXYUSERPWD, $m[1] . ':' . $m[2]);
+
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+            curl_setopt($ch, CURLOPT_ENCODING, 'gzip,deflate');
+            curl_setopt($ch, CURLOPT_USERAGENT, $userAgents[$try % count($userAgents)]);
+
+            $headers = [
+                'Accept: */*',
+                'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+                'Cache-Control: no-cache',
+                'Pragma: no-cache',
+            ];
+            if ($referer) {
+                curl_setopt($ch, CURLOPT_REFERER, $referer);
+            }
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+            if ($useProxy && !empty($proxyPool)) {
+                $proxy = $proxyPool[array_rand($proxyPool)];
+                if (strpos($proxy, '://') !== false) {
+                    curl_setopt($ch, CURLOPT_PROXY, $proxy);
+                } else {
+                    curl_setopt($ch, CURLOPT_PROXY, 'http://' . $proxy);
+                }
+                if (preg_match('/([^:]+):([^@]+)@(.+)/', $proxy, $m)) {
+                    curl_setopt($ch, CURLOPT_PROXYUSERPWD, $m[1] . ':' . $m[2]);
+                }
+            }
+
+            $content = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+
+            if ($httpCode >= 200 && $httpCode < 300 && $content !== false) {
+                return ['content' => $content, 'http_code' => $httpCode];
+            }
+
+            $lastHttpCode = $httpCode;
+            $lastError = $curlError ?: ('HTTP ' . $httpCode);
+        }
+
+        return false;
+    }
+
+    /**
+     * 从任意 URL（视频页或 M3U8）解析出真实的 M3U8 内容
+     *
+     * @param string $url
+     * @return array|false ['content' => string, 'final_url' => string] 或 false
+     */
+    public static function resolveM3U8FromUrl($url)
+    {
+        if (stripos($url, '.m3u8') !== false) {
+            $result = self::downloadM3U8Ex($url);
+            if ($result) {
+                $result['final_url'] = $url;
+                return $result;
+            }
+            return false;
+        }
+
+        $pageResult = self::downloadM3U8Ex($url);
+        if (!$pageResult) return false;
+
+        $content = $pageResult['content'];
+
+        if (strpos($content, '#EXTM3U') !== false) {
+            $pageResult['final_url'] = $url;
+            return $pageResult;
+        }
+
+        $json = json_decode($content, true);
+        if (is_array($json)) {
+            $m3u8Url = self::extractM3U8FromArray($json);
+            if ($m3u8Url) {
+                if (!filter_var($m3u8Url, FILTER_VALIDATE_URL)) {
+                    $m3u8Url = self::resolveUrl($url, $m3u8Url);
+                }
+                $subResult = self::downloadM3U8Ex($m3u8Url);
+                if ($subResult) {
+                    $subResult['final_url'] = $m3u8Url;
+                    return $subResult;
+                }
             }
         }
-        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-        $content = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
 
-        if ($httpCode < 200 || $httpCode >= 300) return false;
-        return $content;
+        if (preg_match_all('/https?:\/\/[^\s"\'<>]+\.m3u8[^\s"\'<>]*/i', $content, $matches)) {
+            foreach ($matches[0] as $m3u8Url) {
+                $subResult = self::downloadM3U8Ex($m3u8Url);
+                if ($subResult) {
+                    $subResult['final_url'] = $m3u8Url;
+                    return $subResult;
+                }
+            }
+        }
+
+        if (preg_match_all('/"url"\s*:\s*"([^"]+)"/i', $content, $matches)) {
+            foreach ($matches[1] as $candidate) {
+                $candidate = stripslashes($candidate);
+                if (stripos($candidate, 'http') === 0 || stripos($candidate, '/') === 0) {
+                    if (!filter_var($candidate, FILTER_VALIDATE_URL)) {
+                        $candidate = self::resolveUrl($url, $candidate);
+                    }
+                    $subResult = self::downloadM3U8Ex($candidate);
+                    if ($subResult && strpos($subResult['content'], '#EXTM3U') !== false) {
+                        $subResult['final_url'] = $candidate;
+                        return $subResult;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 从多维数组中提取 m3u8 播放地址
+     */
+    private static function extractM3U8FromArray($arr)
+    {
+        if (!is_array($arr)) return null;
+
+        foreach ($arr as $key => $val) {
+            if (is_string($val) && stripos($val, '.m3u8') !== false) {
+                return $val;
+            }
+            if (is_string($key) && in_array(strtolower($key), ['url', 'play_url', 'm3u8', 'video_url', 'src'])) {
+                if (is_string($val) && filter_var($val, FILTER_VALIDATE_URL)) {
+                    return $val;
+                }
+            }
+            if (is_array($val)) {
+                $found = self::extractM3U8FromArray($val);
+                if ($found) return $found;
+            }
+        }
+        return null;
     }
 }
