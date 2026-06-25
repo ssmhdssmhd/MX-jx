@@ -649,8 +649,13 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
 
         if ($ajaxEarlyAction === 'ajax_md5_deep_analyze') {
             // === MD5 深度分析：获取每个片段的详细信息 ===
+            @set_time_limit(0);
+            @ignore_user_abort(true);
+            @ini_set('memory_limit', '256M');
+
             $videoUrl = trim($_POST['video_url'] ?? '');
             $m3u8UrlInput = trim($_POST['m3u8_url'] ?? '');
+            $scanMode = trim($_POST['scan_mode'] ?? 'quick'); // quick=快速抽样, full=全部
 
             if ($videoUrl === '' && $m3u8UrlInput === '') {
                 echo json_encode(['code' => 400, 'error' => '请输入视频 URL 或 M3U8 地址'], JSON_UNESCAPED_UNICODE);
@@ -682,10 +687,19 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             $m3u8Content = $resolved['content'];
             $finalM3u8Url = $resolved['final_url'] ?? $targetUrl;
 
-            // 执行深度分析
-            $result = $md5->deepAnalyze($m3u8Content, $finalM3u8Url);
+            // 计算片段总数，快速模式下限制数量
+            $segCount = substr_count($m3u8Content, '#EXTINF:');
+            $maxSegments = 0;
+            $isQuickMode = false;
+            if ($scanMode === 'quick' && $segCount > 30) {
+                $maxSegments = 30;
+                $isQuickMode = true;
+            }
 
-            echo json_encode([
+            // 执行深度分析
+            $result = $md5->deepAnalyze($m3u8Content, $finalM3u8Url, $maxSegments);
+
+            $response = [
                 'code' => 200,
                 'video_url' => $videoUrl,
                 'm3u8_url' => $finalM3u8Url,
@@ -693,7 +707,12 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 'stats' => $result['stats'],
                 'clean_m3u8' => $result['clean_m3u8'],
                 'domain' => $result['domain'],
-            ], JSON_UNESCAPED_UNICODE);
+                'total_segments' => $segCount,
+                'is_quick_mode' => $isQuickMode,
+                'analyzed_segments' => count($result['segments']),
+            ];
+
+            echo json_encode($response, JSON_UNESCAPED_UNICODE);
             exit;
         }
 
@@ -1764,8 +1783,15 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">M3U8 URL（可选）</label>
                         <input type="text" id="deep_m3u8_url" placeholder="直接指定m3u8地址" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
                     </div>
+                    <div style="flex:1;min-width:150px">
+                        <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">扫描模式</label>
+                        <select id="deep_scan_mode" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
+                            <option value="quick">⚡ 快速模式（前30段）</option>
+                            <option value="full">🔍 完整模式（全部片段）</option>
+                        </select>
+                    </div>
                     <div style="flex:0">
-                        <button type="button" onclick="md5DeepAnalyze()" style="padding:10px 24px;font-size:14px;background:#4f46e5;color:white;border:none;border-radius:6px;cursor:pointer">🚀 开始深度分析</button>
+                        <button type="button" onclick="md5DeepAnalyze()" id="deep_analyze_btn" style="padding:10px 24px;font-size:14px;background:#4f46e5;color:white;border:none;border-radius:6px;cursor:pointer">🚀 开始深度分析</button>
                     </div>
                 </div>
             </div>
@@ -5539,6 +5565,8 @@ function md5ResetDefault() {
 function md5DeepAnalyze() {
     var videoUrl = document.getElementById('deep_video_url').value.trim();
     var m3u8Url = document.getElementById('deep_m3u8_url').value.trim();
+    var scanMode = document.getElementById('deep_scan_mode').value;
+    var btn = document.getElementById('deep_analyze_btn');
 
     var errorDiv = document.getElementById('deep_error');
     var resultDiv = document.getElementById('deep_analysis_result');
@@ -5555,11 +5583,15 @@ function md5DeepAnalyze() {
 
     resultDiv.style.display = 'none';
     loadingDiv.style.display = 'block';
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    btn.textContent = '⏳ 分析中...';
 
     var formData = new FormData();
     formData.append('action', 'ajax_md5_deep_analyze');
     if (videoUrl) formData.append('video_url', videoUrl);
     if (m3u8Url) formData.append('m3u8_url', m3u8Url);
+    formData.append('scan_mode', scanMode);
 
     fetch(window.location.href, { method: 'POST', body: formData })
         .then(function(r) {
@@ -5573,6 +5605,10 @@ function md5DeepAnalyze() {
         })
         .then(function(data) {
             loadingDiv.style.display = 'none';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.textContent = '🚀 开始深度分析';
+
             if (data.code !== 200) {
                 errorDiv.style.display = 'block';
                 errorDiv.textContent = '❌ 分析失败：' + (data.error || data.msg || '未知错误');
@@ -5584,11 +5620,15 @@ function md5DeepAnalyze() {
 
             // 更新统计
             var stats = data.stats || {};
+            var totalSegs = data.total_segments || stats.total_segments || 0;
+            var analyzedSegs = data.analyzed_segments || data.segments.length || 0;
             var statsDiv = document.getElementById('deep_stats');
+            var quickHint = data.is_quick_mode ? '<div style="padding:8px 16px;background:#fffbeb;border-radius:6px;color:#d97706"><b>模式：</b>⚡ 快速抽样（' + analyzedSegs + '/' + totalSegs + '段）</div>' : '';
             statsDiv.innerHTML = ''
-                + '<div style="padding:8px 16px;background:#f3f4f6;border-radius:6px"><b>总片段：</b>' + (stats.total_segments || 0) + '</div>'
+                + '<div style="padding:8px 16px;background:#f3f4f6;border-radius:6px"><b>总片段：</b>' + totalSegs + '</div>'
                 + '<div style="padding:8px 16px;background:#fef2f2;border-radius:6px;color:#dc2626"><b>广告片段：</b>' + (stats.ad_segments || 0) + '</div>'
-                + '<div style="padding:8px 16px;background:#f0fdf4;border-radius:6px;color:#059669"><b>正片片段：</b>' + (stats.content_segments || 0) + '</div>';
+                + '<div style="padding:8px 16px;background:#f0fdf4;border-radius:6px;color:#059669"><b>正片片段：</b>' + (stats.content_segments || 0) + '</div>'
+                + quickHint;
 
             // 更新域名
             document.getElementById('deep_domain').textContent = data.domain || '';
@@ -5644,6 +5684,9 @@ function md5DeepAnalyze() {
         })
         .catch(function(e) {
             loadingDiv.style.display = 'none';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.textContent = '🚀 开始深度分析';
             errorDiv.style.display = 'block';
             errorDiv.textContent = '❌ 请求失败：' + e.message;
         });

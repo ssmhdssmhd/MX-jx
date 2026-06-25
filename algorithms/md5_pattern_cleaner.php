@@ -698,11 +698,17 @@ class MD5PatternCleaner
      *   'domain' => string (视频域名),
      * ]
      */
-    public function deepAnalyze($m3u8Content, $videoUrl = '')
+    public function deepAnalyze($m3u8Content, $videoUrl = '', $maxSegments = 0)
     {
         $parsed = $this->parseM3U8($m3u8Content);
         $segments = $parsed['segments'];
         $totalSegments = count($segments);
+
+        // 如果限制了最大片段数，只取前 N 个进行分析（但统计仍按总数）
+        $analyzeSegments = $segments;
+        if ($maxSegments > 0 && $totalSegments > $maxSegments) {
+            $analyzeSegments = array_slice($segments, 0, $maxSegments, true);
+        }
 
         $result = [
             'segments' => [],
@@ -721,14 +727,14 @@ class MD5PatternCleaner
             return $result;
         }
 
-        // 下载并分析所有片段
+        // 下载并分析片段
         $segmentResults = [];
         $actualConcurrency = SmartConcurrencyController::getOptimalConcurrency($this->maxConcurrency);
 
         if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
-            $segmentResults = $this->downloadSegmentsConcurrent($segments, $videoUrl, $actualConcurrency);
+            $segmentResults = $this->downloadSegmentsConcurrent($analyzeSegments, $videoUrl, $actualConcurrency);
         } else {
-            $segmentResults = $this->downloadSegmentsSequential($segments, $videoUrl);
+            $segmentResults = $this->downloadSegmentsSequential($analyzeSegments, $videoUrl);
         }
 
         // 批量查询数据库获取MD5状态
@@ -744,7 +750,7 @@ class MD5PatternCleaner
         $decisions = [];
         $cleanSegments = [];
 
-        foreach ($segments as $idx => $seg) {
+        foreach ($analyzeSegments as $idx => $seg) {
             $r = $segmentResults[$idx] ?? ['success' => false, 'md5' => '', 'size' => 0];
             $fullUrl = $this->resolveUrl($videoUrl, $seg['uri']);
 
