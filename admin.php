@@ -648,14 +648,16 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         }
 
         if ($ajaxEarlyAction === 'ajax_md5_deep_analyze') {
-            // === MD5 深度分析：获取每个片段的详细信息 ===
+            // === MD5 深度分析：分片批量分析（避免超时） ===
             @set_time_limit(0);
             @ignore_user_abort(true);
             @ini_set('memory_limit', '256M');
 
             $videoUrl = trim($_POST['video_url'] ?? '');
             $m3u8UrlInput = trim($_POST['m3u8_url'] ?? '');
-            $scanMode = trim($_POST['scan_mode'] ?? 'quick'); // quick=快速抽样, full=全部
+            $scanMode = trim($_POST['scan_mode'] ?? 'standard'); // quick/standard/slow
+            $offset = (int)($_POST['offset'] ?? 0);
+            $m3u8CacheKey = trim($_POST['cache_key'] ?? '');
 
             if ($videoUrl === '' && $m3u8UrlInput === '') {
                 echo json_encode(['code' => 400, 'error' => '请输入视频 URL 或 M3U8 地址'], JSON_UNESCAPED_UNICODE);
@@ -669,47 +671,120 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 exit;
             }
 
-            // 使用智能解析：自动从视频页或直接 m3u8 获取内容
-            $resolved = MD5PatternCleaner::resolveM3U8FromUrl($targetUrl);
-            if ($resolved === false) {
-                $errorMsg = '无法获取 M3U8 内容。';
-                if (stripos($targetUrl, '.m3u8') === false) {
-                    $errorMsg .= ' 该链接不是直接的 M3U8 地址，且未能从页面中解析出播放地址。';
-                    $errorMsg .= ' 建议直接提供 .m3u8 结尾的播放链接。';
-                } else {
-                    $errorMsg .= ' 可能的原因：URL 无效、网络连接失败、服务器拒绝访问、或需要特定的 Referer/Cookie。';
+            // 不同模式的每批大小
+            $batchSizes = [
+                'quick' => 10,       // 快速：每批10段，只分析前30段
+                'standard' => 15,    // 标准：每批15段，分析全部
+                'slow' => 6,         // 慢速：每批6段，更稳定，分析全部
+            ];
+            $batchSize = isset($batchSizes[$scanMode]) ? $batchSizes[$scanMode] : 15;
+            $quickModeLimit = ($scanMode === 'quick') ? 30 : 0;
+
+            // 使用智能解析获取 M3U8 内容（第一次需要下载，后续批次用 session 缓存）
+            $m3u8Content = null;
+            $finalM3u8Url = $targetUrl;
+
+            session_start();
+            $cacheKey = $m3u8CacheKey ?: md5($targetUrl);
+            $cacheSessionKey = 'md5_deep_m3u8_' . $cacheKey;
+
+            if ($offset > 0 && !empty($_SESSION[$cacheSessionKey])) {
+                $m3u8Content = $_SESSION[$cacheSessionKey]['content'];
+                $finalM3u8Url = $_SESSION[$cacheSessionKey]['url'];
+            } else {
+                $resolved = MD5PatternCleaner::resolveM3U8FromUrl($targetUrl);
+                if ($resolved === false) {
+                    $errorMsg = '无法获取 M3U8 内容。';
+                    if (stripos($targetUrl, '.m3u8') === false) {
+                        $errorMsg .= ' 该链接不是直接的 M3U8 地址，且未能从页面中解析出播放地址。';
+                        $errorMsg .= ' 建议直接提供 .m3u8 结尾的播放链接。';
+                    } else {
+                        $errorMsg .= ' 可能的原因：URL 无效、网络连接失败、服务器拒绝访问、或需要特定的 Referer/Cookie。';
+                    }
+                    $errorMsg .= '（已尝试 3 次重试 + 多种 User-Agent）';
+                    echo json_encode(['code' => 500, 'error' => $errorMsg], JSON_UNESCAPED_UNICODE);
+                    exit;
                 }
-                $errorMsg .= '（已尝试 3 次重试 + 多种 User-Agent）';
-                echo json_encode(['code' => 500, 'error' => $errorMsg], JSON_UNESCAPED_UNICODE);
-                exit;
+                $m3u8Content = $resolved['content'];
+                $finalM3u8Url = $resolved['final_url'] ?? $targetUrl;
+                $_SESSION[$cacheSessionKey] = [
+                    'content' => $m3u8Content,
+                    'url' => $finalM3u8Url,
+                    'time' => time(),
+                ];
             }
+            session_write_close();
 
-            $m3u8Content = $resolved['content'];
-            $finalM3u8Url = $resolved['final_url'] ?? $targetUrl;
-
-            // 计算片段总数，快速模式下限制数量
+            // 快速模式限制
             $segCount = substr_count($m3u8Content, '#EXTINF:');
-            $maxSegments = 0;
-            $isQuickMode = false;
-            if ($scanMode === 'quick' && $segCount > 30) {
-                $maxSegments = 30;
-                $isQuickMode = true;
+            $endOffset = $offset + $batchSize;
+            if ($quickModeLimit > 0 && $endOffset > $quickModeLimit) {
+                $endOffset = $quickModeLimit;
+                $batchSize = max(0, $endOffset - $offset);
             }
 
-            // 执行深度分析
-            $result = $md5->deepAnalyze($m3u8Content, $finalM3u8Url, $maxSegments);
+            // 执行本批次分析
+            $batchResult = $md5->deepAnalyzeBatch($m3u8Content, $finalM3u8Url, $offset, $batchSize);
+
+            $total = (int)$batchResult['total_segments'];
+            $actualBatch = count($batchResult['segments']);
+            $nextOffset = $offset + $actualBatch;
+            $hasMore = ($nextOffset < $total);
+
+            // 快速模式下，超过限制就不再继续
+            if ($quickModeLimit > 0 && $nextOffset >= $quickModeLimit) {
+                $hasMore = false;
+            }
+
+            // 累积广告片段索引到 session（用于最后生成 clean_m3u8）
+            @session_start();
+            $adSegsKey = 'md5_deep_adsegs_' . $cacheKey;
+            if ($offset === 0) {
+                $_SESSION[$adSegsKey] = [];
+            }
+            if (!isset($_SESSION[$adSegsKey])) {
+                $_SESSION[$adSegsKey] = [];
+            }
+            foreach ($batchResult['segments'] as $seg) {
+                if (!empty($seg['is_ad'])) {
+                    $_SESSION[$adSegsKey][$seg['index']] = true;
+                }
+            }
+            $adCount = count($_SESSION[$adSegsKey]);
+            session_write_close();
+
+            // 如果是最后一批，生成清理后的 M3U8（不重新下载，只用索引过滤）
+            $cleanM3u8 = '';
+            if (!$hasMore) {
+                $adIndexes = [];
+                @session_start();
+                if (!empty($_SESSION[$adSegsKey])) {
+                    $adIndexes = $_SESSION[$adSegsKey];
+                }
+                unset($_SESSION[$cacheSessionKey]);
+                unset($_SESSION[$adSegsKey]);
+                session_write_close();
+
+                $cleanM3u8 = $md5->buildCleanM3U8ByIndex($m3u8Content, $finalM3u8Url, $adIndexes);
+            }
 
             $response = [
                 'code' => 200,
                 'video_url' => $videoUrl,
                 'm3u8_url' => $finalM3u8Url,
-                'segments' => $result['segments'],
-                'stats' => $result['stats'],
-                'clean_m3u8' => $result['clean_m3u8'],
-                'domain' => $result['domain'],
-                'total_segments' => $segCount,
-                'is_quick_mode' => $isQuickMode,
-                'analyzed_segments' => count($result['segments']),
+                'segments' => $batchResult['segments'],
+                'domain' => $batchResult['domain'],
+                'total_segments' => $total,
+                'offset' => $offset,
+                'batch_size' => $actualBatch,
+                'next_offset' => $nextOffset,
+                'has_more' => $hasMore,
+                'scan_mode' => $scanMode,
+                'cache_key' => $cacheKey,
+                'is_quick_mode' => ($quickModeLimit > 0),
+                'quick_limit' => $quickModeLimit,
+                'clean_m3u8' => $cleanM3u8,
+                'ad_count_so_far' => $adCount,
             ];
 
             echo json_encode($response, JSON_UNESCAPED_UNICODE);
@@ -1786,13 +1861,25 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <div style="flex:1;min-width:150px">
                         <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">扫描模式</label>
                         <select id="deep_scan_mode" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
-                            <option value="quick">⚡ 快速模式（前30段）</option>
-                            <option value="full">🔍 完整模式（全部片段）</option>
+                            <option value="quick">⚡ 快速（前30段·分片）</option>
+                            <option value="standard" selected>📊 标准（全部分片·每批15段）</option>
+                            <option value="slow">🐢 慢速（全部分片·每批6段·稳定）</option>
                         </select>
                     </div>
                     <div style="flex:0">
                         <button type="button" onclick="md5DeepAnalyze()" id="deep_analyze_btn" style="padding:10px 24px;font-size:14px;background:#4f46e5;color:white;border:none;border-radius:6px;cursor:pointer">🚀 开始深度分析</button>
                     </div>
+                </div>
+            </div>
+
+            <!-- 进度条 -->
+            <div id="deep_progress" style="display:none;margin-bottom:20px">
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#555;margin-bottom:6px">
+                    <span id="deep_progress_text">准备中...</span>
+                    <span id="deep_progress_percent">0%</span>
+                </div>
+                <div style="height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden">
+                    <div id="deep_progress_bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4f46e5,#06b6d4);border-radius:4px;transition:width 0.3s ease"></div>
                 </div>
             </div>
 
@@ -5561,8 +5648,18 @@ function md5ResetDefault() {
     if (resultEl2) resultEl2.textContent = resultText;
     if (resultEl3) resultEl3.textContent = resultText;
 }
-// ===== MD5 深度分析：实时检测 TS 内容 =====
+// ===== MD5 深度分析：实时检测 TS 内容（分片加载，避免超时） =====
+var _deepAnalyzeRunning = false;
+var _deepAllSegments = [];
+var _deepCacheKey = '';
+var _deepVideoUrl = '';
+var _deepM3u8Url = '';
+var _deepDomain = '';
+var _deepTotal = 0;
+
 function md5DeepAnalyze() {
+    if (_deepAnalyzeRunning) return;
+
     var videoUrl = document.getElementById('deep_video_url').value.trim();
     var m3u8Url = document.getElementById('deep_m3u8_url').value.trim();
     var scanMode = document.getElementById('deep_scan_mode').value;
@@ -5571,6 +5668,7 @@ function md5DeepAnalyze() {
     var errorDiv = document.getElementById('deep_error');
     var resultDiv = document.getElementById('deep_analysis_result');
     var loadingDiv = document.getElementById('deep_loading');
+    var progressDiv = document.getElementById('deep_progress');
 
     errorDiv.style.display = 'none';
     errorDiv.textContent = '';
@@ -5581,17 +5679,41 @@ function md5DeepAnalyze() {
         return;
     }
 
+    _deepAnalyzeRunning = true;
+    _deepAllSegments = [];
+    _deepCacheKey = '';
+    _deepVideoUrl = videoUrl;
+    _deepM3u8Url = '';
+    _deepDomain = '';
+    _deepTotal = 0;
+
     resultDiv.style.display = 'none';
-    loadingDiv.style.display = 'block';
+    loadingDiv.style.display = 'none';
+    progressDiv.style.display = 'block';
+    updateProgress(0, 0, '准备中...');
+
     btn.disabled = true;
     btn.style.opacity = '0.6';
     btn.textContent = '⏳ 分析中...';
+
+    // 开始分片加载
+    deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, 0, '');
+}
+
+function deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, offset, cacheKey) {
+    var errorDiv = document.getElementById('deep_error');
+    var btn = document.getElementById('deep_analyze_btn');
+    var resultDiv = document.getElementById('deep_analysis_result');
+    var progressDiv = document.getElementById('deep_progress');
+    var loadingDiv = document.getElementById('deep_loading');
 
     var formData = new FormData();
     formData.append('action', 'ajax_md5_deep_analyze');
     if (videoUrl) formData.append('video_url', videoUrl);
     if (m3u8Url) formData.append('m3u8_url', m3u8Url);
     formData.append('scan_mode', scanMode);
+    formData.append('offset', offset);
+    if (cacheKey) formData.append('cache_key', cacheKey);
 
     fetch(window.location.href, { method: 'POST', body: formData })
         .then(function(r) {
@@ -5604,85 +5726,41 @@ function md5DeepAnalyze() {
             return r.json();
         })
         .then(function(data) {
-            loadingDiv.style.display = 'none';
-            btn.disabled = false;
-            btn.style.opacity = '1';
-            btn.textContent = '🚀 开始深度分析';
-
             if (data.code !== 200) {
-                errorDiv.style.display = 'block';
-                errorDiv.textContent = '❌ 分析失败：' + (data.error || data.msg || '未知错误');
-                return;
+                throw new Error(data.error || data.msg || '未知错误');
             }
 
-            // 显示结果
-            resultDiv.style.display = 'block';
+            // 累积片段
+            _deepAllSegments = _deepAllSegments.concat(data.segments || []);
+            _deepCacheKey = data.cache_key || cacheKey;
+            _deepM3u8Url = data.m3u8_url || _deepM3u8Url;
+            _deepDomain = data.domain || _deepDomain;
+            _deepTotal = data.total_segments || 0;
 
-            // 更新统计
-            var stats = data.stats || {};
-            var totalSegs = data.total_segments || stats.total_segments || 0;
-            var analyzedSegs = data.analyzed_segments || data.segments.length || 0;
-            var statsDiv = document.getElementById('deep_stats');
-            var quickHint = data.is_quick_mode ? '<div style="padding:8px 16px;background:#fffbeb;border-radius:6px;color:#d97706"><b>模式：</b>⚡ 快速抽样（' + analyzedSegs + '/' + totalSegs + '段）</div>' : '';
-            statsDiv.innerHTML = ''
-                + '<div style="padding:8px 16px;background:#f3f4f6;border-radius:6px"><b>总片段：</b>' + totalSegs + '</div>'
-                + '<div style="padding:8px 16px;background:#fef2f2;border-radius:6px;color:#dc2626"><b>广告片段：</b>' + (stats.ad_segments || 0) + '</div>'
-                + '<div style="padding:8px 16px;background:#f0fdf4;border-radius:6px;color:#059669"><b>正片片段：</b>' + (stats.content_segments || 0) + '</div>'
-                + quickHint;
+            var analyzed = _deepAllSegments.length;
+            var total = data.is_quick_mode ? (data.quick_limit || _deepTotal) : _deepTotal;
+            var percent = total > 0 ? Math.min(100, Math.round(analyzed / total * 100)) : 0;
 
-            // 更新域名
-            document.getElementById('deep_domain').textContent = data.domain || '';
+            // 更新进度
+            var modeText = { quick: '快速', standard: '标准', slow: '慢速' }[scanMode] || scanMode;
+            updateProgress(percent, analyzed, modeText + '模式 · 已分析 ' + analyzed + '/' + total + ' 段');
 
-            // 更新广告片段列表
-            var adSegs = data.segments.filter(function(s) { return s.is_ad; });
-            var adSegsDiv = document.getElementById('deep_ad_segments');
-            if (adSegs.length === 0) {
-                adSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">未检测到广告片段</div>';
+            // 实时更新页面显示（增量）
+            updateDeepResultDisplay(data.is_quick_mode, total);
+
+            if (data.has_more && data.next_offset !== undefined) {
+                // 继续下一批
+                setTimeout(function() {
+                    deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, data.next_offset, data.cache_key);
+                }, 200);
             } else {
-                var adTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-                    + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">原因</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
-                adSegs.forEach(function(s, i) {
-                    adTable += '<tr style="border-bottom:1px solid #e5e7eb">'
-                        + '<td style="padding:6px 8px">' + s.index + '</td>'
-                        + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
-                        + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
-                        + '<td style="padding:6px 8px;color:#dc2626">' + (s.reason || '') + '</td>'
-                        + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
-                        + '</tr>';
-                });
-                adTable += '</table>';
-                adSegsDiv.innerHTML = adTable;
+                // 全部完成
+                finishDeepAnalyze(data);
             }
-
-            // 更新正片片段列表
-            var contentSegs = data.segments.filter(function(s) { return !s.is_ad; });
-            var contentSegsDiv = document.getElementById('deep_content_segments');
-            if (contentSegs.length === 0) {
-                contentSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">无正片片段</div>';
-            } else {
-                var contentTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-                    + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">状态</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
-                contentSegs.forEach(function(s) {
-                    contentTable += '<tr style="border-bottom:1px solid #e5e7eb">'
-                        + '<td style="padding:6px 8px">' + s.index + '</td>'
-                        + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
-                        + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
-                        + '<td style="padding:6px 8px;color:#059669">' + (s.reason || s.status || '') + '</td>'
-                        + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
-                        + '</tr>';
-                });
-                contentTable += '</table>';
-                contentSegsDiv.innerHTML = contentTable;
-            }
-
-            // 更新清理后的 M3U8
-            document.getElementById('deep_clean_m3u8').value = data.clean_m3u8 || '';
-
-            // 自动滚动到结果区域
-            resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
         })
         .catch(function(e) {
+            _deepAnalyzeRunning = false;
+            progressDiv.style.display = 'none';
             loadingDiv.style.display = 'none';
             btn.disabled = false;
             btn.style.opacity = '1';
@@ -5690,6 +5768,93 @@ function md5DeepAnalyze() {
             errorDiv.style.display = 'block';
             errorDiv.textContent = '❌ 请求失败：' + e.message;
         });
+}
+
+function updateProgress(percent, analyzed, text) {
+    var bar = document.getElementById('deep_progress_bar');
+    var pct = document.getElementById('deep_progress_percent');
+    var txt = document.getElementById('deep_progress_text');
+    if (bar) bar.style.width = percent + '%';
+    if (pct) pct.textContent = percent + '%';
+    if (txt) txt.textContent = text;
+}
+
+function updateDeepResultDisplay(isQuickMode, total) {
+    var resultDiv = document.getElementById('deep_analysis_result');
+    resultDiv.style.display = 'block';
+
+    var adCount = _deepAllSegments.filter(function(s) { return s.is_ad; }).length;
+    var contentCount = _deepAllSegments.length - adCount;
+    var analyzed = _deepAllSegments.length;
+
+    // 更新统计
+    var statsDiv = document.getElementById('deep_stats');
+    var quickHint = isQuickMode ? '<div style="padding:8px 16px;background:#fffbeb;border-radius:6px;color:#d97706"><b>模式：</b>⚡ 快速抽样（' + analyzed + '/' + total + '段）</div>' : '';
+    statsDiv.innerHTML = ''
+        + '<div style="padding:8px 16px;background:#f3f4f6;border-radius:6px"><b>总片段：</b>' + total + '</div>'
+        + '<div style="padding:8px 16px;background:#fef2f2;border-radius:6px;color:#dc2626"><b>广告片段：</b>' + adCount + '</div>'
+        + '<div style="padding:8px 16px;background:#f0fdf4;border-radius:6px;color:#059669"><b>正片片段：</b>' + contentCount + '</div>'
+        + quickHint;
+
+    // 更新域名
+    document.getElementById('deep_domain').textContent = _deepDomain || '';
+
+    // 更新广告片段列表
+    var adSegs = _deepAllSegments.filter(function(s) { return s.is_ad; });
+    var adSegsDiv = document.getElementById('deep_ad_segments');
+    if (adSegs.length === 0) {
+        adSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">未检测到广告片段</div>';
+    } else {
+        var adTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+            + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">原因</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
+        adSegs.forEach(function(s) {
+            adTable += '<tr style="border-bottom:1px solid #e5e7eb">'
+                + '<td style="padding:6px 8px">' + s.index + '</td>'
+                + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
+                + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
+                + '<td style="padding:6px 8px;color:#dc2626">' + (s.reason || '') + '</td>'
+                + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
+                + '</tr>';
+        });
+        adTable += '</table>';
+        adSegsDiv.innerHTML = adTable;
+    }
+
+    // 更新正片片段列表
+    var contentSegs = _deepAllSegments.filter(function(s) { return !s.is_ad; });
+    var contentSegsDiv = document.getElementById('deep_content_segments');
+    if (contentSegs.length === 0) {
+        contentSegsDiv.innerHTML = '<div style="color:#888;font-size:13px">无正片片段</div>';
+    } else {
+        var contentTable = '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+            + '<tr style="background:#f3f4f6"><th style="padding:6px 8px;text-align:left">#</th><th style="padding:6px 8px;text-align:left">时长</th><th style="padding:6px 8px;text-align:left">MD5</th><th style="padding:6px 8px;text-align:left">状态</th><th style="padding:6px 8px;text-align:left">URL</th></tr>';
+        contentSegs.forEach(function(s) {
+            contentTable += '<tr style="border-bottom:1px solid #e5e7eb">'
+                + '<td style="padding:6px 8px">' + s.index + '</td>'
+                + '<td style="padding:6px 8px">' + s.duration.toFixed(2) + 's</td>'
+                + '<td style="padding:6px 8px;font-family:monospace;font-size:11px;word-break:break-all">' + (s.md5 || 'N/A') + '</td>'
+                + '<td style="padding:6px 8px;color:#059669">' + (s.reason || s.status || '') + '</td>'
+                + '<td style="padding:6px 8px;font-size:11px;word-break:break-all;max-width:200px">' + (s.full_url || s.uri || '') + '</td>'
+                + '</tr>';
+        });
+        contentTable += '</table>';
+        contentSegsDiv.innerHTML = contentTable;
+    }
+}
+
+function finishDeepAnalyze(data) {
+    _deepAnalyzeRunning = false;
+
+    var btn = document.getElementById('deep_analyze_btn');
+    var progressDiv = document.getElementById('deep_progress');
+
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.textContent = '🚀 开始深度分析';
+    progressDiv.style.display = 'none';
+
+    // 更新清理后的 M3U8
+    document.getElementById('deep_clean_m3u8').value = data.clean_m3u8 || '';
 }
 // 复制清理后的 M3U8
 function copyDeepM3u8() {

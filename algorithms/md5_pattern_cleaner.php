@@ -698,46 +698,51 @@ class MD5PatternCleaner
      *   'domain' => string (视频域名),
      * ]
      */
-    public function deepAnalyze($m3u8Content, $videoUrl = '', $maxSegments = 0)
+    public function deepAnalyzeBatch($m3u8Content, $videoUrl = '', $offset = 0, $batchSize = 0)
     {
         $parsed = $this->parseM3U8($m3u8Content);
         $segments = $parsed['segments'];
         $totalSegments = count($segments);
 
-        // 如果限制了最大片段数，只取前 N 个进行分析（但统计仍按总数）
-        $analyzeSegments = $segments;
-        if ($maxSegments > 0 && $totalSegments > $maxSegments) {
-            $analyzeSegments = array_slice($segments, 0, $maxSegments, true);
-        }
-
         $result = [
             'segments' => [],
-            'stats' => [
-                'total_segments' => $totalSegments,
-                'ad_segments' => 0,
-                'content_segments' => 0,
-            ],
-            'clean_m3u8' => '',
+            'total_segments' => $totalSegments,
+            'offset' => (int)$offset,
+            'batch_size' => 0,
+            'has_more' => false,
             'domain' => parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST),
             'header' => $parsed['header'],
             'has_end' => $parsed['has_end'],
         ];
 
-        if ($totalSegments === 0) {
+        if ($totalSegments === 0 || $offset >= $totalSegments) {
             return $result;
         }
 
-        // 下载并分析片段
+        $end = $batchSize > 0 ? min($offset + $batchSize, $totalSegments) : $totalSegments;
+        $batchSegments = [];
+        for ($i = $offset; $i < $end; $i++) {
+            if (isset($segments[$i])) {
+                $batchSegments[$i] = $segments[$i];
+            }
+        }
+
+        $result['batch_size'] = count($batchSegments);
+        $result['has_more'] = ($end < $totalSegments);
+
+        if (empty($batchSegments)) {
+            return $result;
+        }
+
         $segmentResults = [];
         $actualConcurrency = SmartConcurrencyController::getOptimalConcurrency($this->maxConcurrency);
 
         if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
-            $segmentResults = $this->downloadSegmentsConcurrent($analyzeSegments, $videoUrl, $actualConcurrency);
+            $segmentResults = $this->downloadSegmentsConcurrent($batchSegments, $videoUrl, $actualConcurrency);
         } else {
-            $segmentResults = $this->downloadSegmentsSequential($analyzeSegments, $videoUrl);
+            $segmentResults = $this->downloadSegmentsSequential($batchSegments, $videoUrl);
         }
 
-        // 批量查询数据库获取MD5状态
         $md5List = [];
         foreach ($segmentResults as $r) {
             if (!empty($r['md5'])) {
@@ -746,11 +751,7 @@ class MD5PatternCleaner
         }
         $md5StatusMap = $this->db->queryBatch($md5List);
 
-        // 构建片段详情和决策
-        $decisions = [];
-        $cleanSegments = [];
-
-        foreach ($analyzeSegments as $idx => $seg) {
+        foreach ($batchSegments as $idx => $seg) {
             $r = $segmentResults[$idx] ?? ['success' => false, 'md5' => '', 'size' => 0];
             $fullUrl = $this->resolveUrl($videoUrl, $seg['uri']);
 
@@ -783,35 +784,159 @@ class MD5PatternCleaner
                     if (!empty($statusEntry['is_whitelist'])) {
                         $status = 'whitelist';
                         $reason = '白名单-正片';
-                        $cleanSegments[] = $seg;
                     } elseif (!empty($statusEntry['in_blacklist'])) {
                         $status = 'blacklist';
                         $reason = '黑名单-广告';
                         $isAd = true;
-                        $result['stats']['ad_segments']++;
                     } elseif (!empty($statusEntry['is_ad'])) {
                         $status = 'ad_identified';
                         $reason = '已识别广告(' . $statusEntry['count'] . '次)';
                         $isAd = true;
-                        $result['stats']['ad_segments']++;
                     } elseif ($statusEntry['count'] >= $this->md5RepeatThreshold) {
                         $status = 'ad_high_freq';
                         $reason = '高频广告(' . $statusEntry['count'] . '次)';
                         $isAd = true;
-                        $result['stats']['ad_segments']++;
-                        // 自动加入黑名单
                         $this->db->markAsAd($md5, true);
                     } else {
                         $status = 'content_low_freq';
                         $reason = '低频内容(' . $statusEntry['count'] . '次)';
-                        $result['stats']['content_segments']++;
-                        $cleanSegments[] = $seg;
                     }
                 } else {
                     $status = 'new_segment';
                     $reason = '新片段(未记录)';
-                    $result['stats']['content_segments']++;
-                    $cleanSegments[] = $seg;
+                }
+
+                $this->db->record(
+                    $md5,
+                    $r['size'],
+                    $seg['duration'],
+                    $videoUrl,
+                    $seg['uri'],
+                    $r['download_ms'] ?? 0,
+                    '',
+                    $r['proxy'] ?? ''
+                );
+            }
+
+            $segInfo['is_ad'] = $isAd;
+            $segInfo['reason'] = $reason;
+            $segInfo['status'] = $status;
+            $result['segments'][] = $segInfo;
+        }
+
+        return $result;
+    }
+
+    public function deepAnalyze($m3u8Content, $videoUrl = '', $maxSegments = 0)
+    {
+        $parsed = $this->parseM3U8($m3u8Content);
+        $segments = $parsed['segments'];
+        $totalSegments = count($segments);
+
+        $result = [
+            'segments' => [],
+            'total_segments' => $totalSegments,
+            'offset' => (int)$offset,
+            'batch_size' => 0,
+            'has_more' => false,
+            'domain' => parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST),
+            'header' => $parsed['header'],
+            'has_end' => $parsed['has_end'],
+        ];
+
+        if ($totalSegments === 0 || $offset >= $totalSegments) {
+            return $result;
+        }
+
+        // 确定本批次要分析的片段
+        $end = $batchSize > 0 ? min($offset + $batchSize, $totalSegments) : $totalSegments;
+        $batchSegments = [];
+        for ($i = $offset; $i < $end; $i++) {
+            if (isset($segments[$i])) {
+                $batchSegments[$i] = $segments[$i];
+            }
+        }
+
+        $result['batch_size'] = count($batchSegments);
+        $result['has_more'] = ($end < $totalSegments);
+
+        if (empty($batchSegments)) {
+            return $result;
+        }
+
+        // 下载并分析这批片段
+        $segmentResults = [];
+        $actualConcurrency = SmartConcurrencyController::getOptimalConcurrency($this->maxConcurrency);
+
+        if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
+            $segmentResults = $this->downloadSegmentsConcurrent($batchSegments, $videoUrl, $actualConcurrency);
+        } else {
+            $segmentResults = $this->downloadSegmentsSequential($batchSegments, $videoUrl);
+        }
+
+        // 批量查询数据库
+        $md5List = [];
+        foreach ($segmentResults as $r) {
+            if (!empty($r['md5'])) {
+                $md5List[] = $r['md5'];
+            }
+        }
+        $md5StatusMap = $this->db->queryBatch($md5List);
+
+        // 构建片段详情
+        foreach ($batchSegments as $idx => $seg) {
+            $r = $segmentResults[$idx] ?? ['success' => false, 'md5' => '', 'size' => 0];
+            $fullUrl = $this->resolveUrl($videoUrl, $seg['uri']);
+
+            $segInfo = [
+                'index' => $idx,
+                'duration' => $seg['duration'],
+                'uri' => $seg['uri'],
+                'full_url' => $fullUrl,
+                'md5' => $r['success'] ? $r['md5'] : '',
+                'size' => $r['size'] ?? 0,
+                'download_ms' => $r['download_ms'] ?? 0,
+                'success' => $r['success'] ?? false,
+                'error' => $r['error'] ?? '',
+            ];
+
+            $isAd = false;
+            $reason = '';
+            $status = 'unknown';
+
+            if (!$r['success']) {
+                $status = 'download_failed';
+                $reason = '下载失败';
+            } else {
+                $md5 = $r['md5'];
+                $segInfo['md5'] = $md5;
+
+                $statusEntry = $md5StatusMap[$md5] ?? null;
+
+                if ($statusEntry) {
+                    if (!empty($statusEntry['is_whitelist'])) {
+                        $status = 'whitelist';
+                        $reason = '白名单-正片';
+                    } elseif (!empty($statusEntry['in_blacklist'])) {
+                        $status = 'blacklist';
+                        $reason = '黑名单-广告';
+                        $isAd = true;
+                    } elseif (!empty($statusEntry['is_ad'])) {
+                        $status = 'ad_identified';
+                        $reason = '已识别广告(' . $statusEntry['count'] . '次)';
+                        $isAd = true;
+                    } elseif ($statusEntry['count'] >= $this->md5RepeatThreshold) {
+                        $status = 'ad_high_freq';
+                        $reason = '高频广告(' . $statusEntry['count'] . '次)';
+                        $isAd = true;
+                        $this->db->markAsAd($md5, true);
+                    } else {
+                        $status = 'content_low_freq';
+                        $reason = '低频内容(' . $statusEntry['count'] . '次)';
+                    }
+                } else {
+                    $status = 'new_segment';
+                    $reason = '新片段(未记录)';
                 }
 
                 // 记录到数据库
@@ -833,10 +958,55 @@ class MD5PatternCleaner
             $result['segments'][] = $segInfo;
         }
 
-        // 构建清理后的M3U8（使用完整URL）
-        $result['clean_m3u8'] = $this->buildOutputM3U8FullUrl($parsed['header'], $cleanSegments, $videoUrl, $parsed['has_end']);
-
         return $result;
+    }
+
+    /**
+     * 构建去广告后的完整 M3U8（使用所有已分析的片段判断 + 未分析片段默认保留）
+     *
+     * @param string $m3u8Content 原始 M3U8 内容
+     * @param string $videoUrl 视频 URL
+     * @param array $analyzedSegs 已分析的片段 [index => ['is_ad' => bool, ...]]
+     * @return string 清理后的 M3U8 内容
+     */
+    public function buildCleanM3U8FromAnalyzed($m3u8Content, $videoUrl, $analyzedSegs)
+    {
+        $parsed = $this->parseM3U8($m3u8Content);
+        $segments = $parsed['segments'];
+        $cleanSegments = [];
+
+        foreach ($segments as $idx => $seg) {
+            if (isset($analyzedSegs[$idx]) && $analyzedSegs[$idx]['is_ad']) {
+                continue;
+            }
+            $cleanSegments[] = $seg;
+        }
+
+        return $this->buildOutputM3U8FullUrl($parsed['header'], $cleanSegments, $videoUrl, $parsed['has_end']);
+    }
+
+    /**
+     * 根据广告片段索引构建去广告 M3U8（高效，不需要重新下载）
+     *
+     * @param string $m3u8Content 原始 M3U8 内容
+     * @param string $videoUrl 视频 URL
+     * @param array $adIndexes 广告片段索引 [index => true]
+     * @return string 清理后的 M3U8 内容
+     */
+    public function buildCleanM3U8ByIndex($m3u8Content, $videoUrl, $adIndexes)
+    {
+        $parsed = $this->parseM3U8($m3u8Content);
+        $segments = $parsed['segments'];
+        $cleanSegments = [];
+
+        foreach ($segments as $idx => $seg) {
+            if (!empty($adIndexes[$idx])) {
+                continue;
+            }
+            $cleanSegments[] = $seg;
+        }
+
+        return $this->buildOutputM3U8FullUrl($parsed['header'], $cleanSegments, $videoUrl, $parsed['has_end']);
     }
 
     /**
