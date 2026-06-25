@@ -522,9 +522,197 @@ show_help() {
 EOF
 }
 
+# ====================== 交互式菜单 ======================
+
+show_menu() {
+    # 只有在真实终端时才清屏
+    if [ -t 0 ] && [ -t 1 ]; then
+        clear
+    fi
+    echo ""
+    echo -e "${GREEN}╔══════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║         沫兮万能解析 - 自动更新工具          ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    get_current_version
+
+    echo -e "  ${CYAN}当前版本:${NC} $CURRENT_VERSION"
+    echo -e "  ${CYAN}脚本目录:${NC} $SCRIPT_DIR"
+    echo ""
+    echo -e "  ${YELLOW}请选择操作:${NC}"
+    echo ""
+    echo -e "  ${GREEN}[1]${NC} 更新到最新版本"
+    echo -e "  ${GREEN}[2]${NC} 强制更新（忽略版本检查）"
+    echo -e "  ${GREEN}[3]${NC} 检查更新"
+    echo -e "  ${GREEN}[4]${NC} 回滚到上一版本"
+    echo -e "  ${GREEN}[5]${NC} 查看当前版本"
+    echo -e "  ${GREEN}[6]${NC} 切换更新分支"
+    echo -e "  ${GREEN}[7]${NC} 切换镜像设置"
+    echo -e "  ${GREEN}[8]${NC} 查看帮助信息"
+    echo ""
+    echo -e "  ${RED}[0]${NC} 退出"
+    echo ""
+    echo -e "════════════════════════════════════════════════"
+}
+
+interactive_menu() {
+    while true; do
+        show_menu
+
+        read -p "  请输入数字选择 [1-8, 0退出]: " choice
+        echo ""
+
+        case "$choice" in
+            1)
+                info "开始更新到最新版本..."
+                echo ""
+                do_update_interactive
+                pause_return
+                ;;
+            2)
+                warn "强制更新模式..."
+                echo ""
+                force=1
+                do_update_interactive
+                force=0
+                pause_return
+                ;;
+            3)
+                info "检查更新..."
+                echo ""
+                check_env
+                check_network
+                get_current_version
+                get_latest_version
+                echo ""
+                if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] && [ "$CURRENT_VERSION" != "unknown" ]; then
+                    warn "发现新版本: $LATEST_VERSION"
+                    info "可选择 [1] 进行更新"
+                else
+                    success "当前已是最新版本"
+                fi
+                pause_return
+                ;;
+            4)
+                info "回滚版本..."
+                echo ""
+                check_env
+                do_rollback
+                pause_return
+                ;;
+            5)
+                show_version
+                pause_return
+                ;;
+            6)
+                echo ""
+                echo -e "  ${CYAN}当前分支:${NC} $GITHUB_BRANCH"
+                echo ""
+                read -p "  请输入分支名称: " new_branch
+                if [ -n "$new_branch" ]; then
+                    GITHUB_BRANCH="$new_branch"
+                    success "分支已切换为: $GITHUB_BRANCH"
+                else
+                    warn "分支未修改"
+                fi
+                pause_return
+                ;;
+            7)
+                echo ""
+                echo -e "  ${CYAN}当前镜像设置:${NC} $USE_MIRROR"
+                if [ "$USE_MIRROR" != "no" ]; then
+                    echo -e "  ${CYAN}镜像地址:${NC} $GITHUB_MIRROR"
+                fi
+                echo ""
+                echo "  请选择镜像模式:"
+                echo ""
+                echo "  [1] 自动检测（默认）"
+                echo "  [2] 强制使用镜像"
+                echo "  [3] 不使用镜像"
+                echo ""
+                read -p "  请选择 [1-3]: " mirror_choice
+                case "$mirror_choice" in
+                    1) USE_MIRROR="auto"; success "已设置为自动检测" ;;
+                    2) USE_MIRROR="yes"; success "已设置为强制使用镜像" ;;
+                    3) USE_MIRROR="no"; success "已设置为不使用镜像" ;;
+                    *) warn "未修改设置" ;;
+                esac
+                pause_return
+                ;;
+            8)
+                show_help
+                pause_return
+                ;;
+            0)
+                info "再见！"
+                echo ""
+                exit 0
+                ;;
+            *)
+                error "无效的选择，请重新输入"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# 交互式更新封装
+do_update_interactive() {
+    check_env
+    check_network
+    get_current_version
+    get_latest_version
+
+    if [ $force -eq 0 ] && [ "$CURRENT_VERSION" = "$LATEST_VERSION" ] && [ "$CURRENT_VERSION" != "unknown" ]; then
+        echo ""
+        success "当前已是最新版本！"
+        echo ""
+        return 0
+    fi
+
+    if ! download_code; then
+        error "下载失败"
+        cleanup
+        return 1
+    fi
+
+    if [ -f "admin.php" ] || [ -f "index.php" ]; then
+        backup_current
+    else
+        info "首次安装，跳过备份"
+    fi
+
+    do_update
+    check_php_syntax || true
+    cleanup
+
+    echo ""
+    success "更新完成！"
+    echo ""
+    echo "  当前版本: $LATEST_VERSION"
+    echo "  更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    if [ -n "$LAST_BACKUP" ]; then
+        echo "  备份文件: $LAST_BACKUP"
+    fi
+    echo ""
+}
+
+# 暂停等待用户按回车返回
+pause_return() {
+    echo ""
+    read -p "按回车键返回主菜单..."
+}
+
 # ====================== 主流程 ======================
 
 main() {
+    # 如果没有参数，进入交互式菜单
+    if [ $# -eq 0 ]; then
+        interactive_menu
+        exit 0
+    fi
+
     local cmd="update"
     local force=0
 
