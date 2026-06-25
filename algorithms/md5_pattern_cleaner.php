@@ -718,10 +718,30 @@ class MD5PatternCleaner
         $segmentResults = [];
         $actualConcurrency = SmartConcurrencyController::getOptimalConcurrency($this->maxConcurrency);
 
-        if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
-            $segmentResults = $this->downloadSegmentsConcurrent($batchSegments, $videoUrl, $actualConcurrency);
-        } else {
-            $segmentResults = $this->downloadSegmentsSequential($batchSegments, $videoUrl);
+        // === 启发式预检测：跳过明显广告/正片片段的下载，大幅提速 ===
+        $preChecked = [];
+        $needDownload = [];
+        foreach ($batchSegments as $idx => $seg) {
+            $heuristic = $this->heuristicCheckLight($seg, $idx, $totalSegments, $medianDuration, $mostCommonDuration, $mostCommonCount, $minDuration, $maxDuration);
+            if ($heuristic['confident']) {
+                $preChecked[$idx] = [
+                    'skip' => true,
+                    'is_ad' => $heuristic['is_ad'],
+                    'reason' => $heuristic['reason'],
+                    'status' => $heuristic['is_ad'] ? 'heuristic_ad_skip' : 'heuristic_content_skip',
+                    'score' => $heuristic['score'],
+                ];
+            } else {
+                $needDownload[$idx] = $seg;
+            }
+        }
+
+        if (!empty($needDownload)) {
+            if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
+                $segmentResults = $this->downloadSegmentsConcurrent($needDownload, $videoUrl, $actualConcurrency);
+            } else {
+                $segmentResults = $this->downloadSegmentsSequential($needDownload, $videoUrl);
+            }
         }
 
         $md5List = [];
@@ -747,6 +767,31 @@ class MD5PatternCleaner
         }
 
         foreach ($batchSegments as $idx => $seg) {
+            $fullUrl = $this->resolveUrl($videoUrl, $seg['uri']);
+
+            // === 启发式预检测命中：直接使用预检测结果，跳过下载 ===
+            if (isset($preChecked[$idx])) {
+                $pre = $preChecked[$idx];
+                $segInfo = [
+                    'index' => $idx,
+                    'duration' => $seg['duration'],
+                    'uri' => $seg['uri'],
+                    'full_url' => $fullUrl,
+                    'md5' => '',
+                    'size' => 0,
+                    'download_ms' => 0,
+                    'success' => true,
+                    'error' => '',
+                    'skipped_download' => true,
+                    'heuristic_score' => $pre['score'],
+                    'is_ad' => $pre['is_ad'],
+                    'reason' => $pre['reason'] . '(免下载)',
+                    'status' => $pre['status'],
+                ];
+                $result['segments'][] = $segInfo;
+                continue;
+            }
+
             $r = $segmentResults[$idx] ?? ['success' => false, 'md5' => '', 'size' => 0];
             $fullUrl = $this->resolveUrl($videoUrl, $seg['uri']);
 
@@ -801,6 +846,221 @@ class MD5PatternCleaner
                     $reason = '新片段(未记录)';
 
                     // === 启发式检测：即使是新片段，也尝试识别广告 ===
+                    $segSize = $r['size'] ?? null;
+                    $heuristicResult = $this->heuristicCheck($seg, $idx, $totalSegments, $medianDuration, $mostCommonDuration, $mostCommonCount, $minDuration, $maxDuration, $segSize, $avgBitrate);
+                    if ($heuristicResult['is_ad']) {
+                        $isAd = true;
+                        $status = 'heuristic_ad';
+                        $reason = '疑似广告(' . $heuristicResult['reason'] . ')';
+                        $segInfo['heuristic_score'] = $heuristicResult['score'];
+                    }
+                }
+
+                $this->db->record(
+                    $md5,
+                    $r['size'],
+                    $seg['duration'],
+                    $videoUrl,
+                    $seg['uri'],
+                    $r['download_ms'] ?? 0,
+                    '',
+                    $r['proxy'] ?? ''
+                );
+            }
+
+            $segInfo['is_ad'] = $isAd;
+            $segInfo['reason'] = $reason;
+            $segInfo['status'] = $status;
+            $result['segments'][] = $segInfo;
+        }
+
+        return $result;
+    }
+
+    /**
+     * 按指定索引批量分析（用于智能抽样模式）
+     */
+    public function deepAnalyzeByIndexes($m3u8Content, $videoUrl, $indexes)
+    {
+        $parsed = $this->parseM3U8($m3u8Content);
+        $segments = $parsed['segments'];
+        $totalSegments = count($segments);
+
+        // 预计算全片时长统计
+        $allDurations = [];
+        foreach ($segments as $s) {
+            $allDurations[] = $s['duration'];
+        }
+        sort($allDurations);
+        $medianDuration = $totalSegments > 0 ? $allDurations[floor($totalSegments / 2)] : 0;
+        $minDuration = $totalSegments > 0 ? $allDurations[0] : 0;
+        $maxDuration = $totalSegments > 0 ? end($allDurations) : 0;
+
+        $durationBuckets = [];
+        foreach ($allDurations as $d) {
+            $bucket = round($d, 1);
+            if (!isset($durationBuckets[$bucket])) $durationBuckets[$bucket] = 0;
+            $durationBuckets[$bucket]++;
+        }
+        arsort($durationBuckets);
+        $mostCommonDuration = $totalSegments > 0 ? (float)key($durationBuckets) : 0;
+        $mostCommonCount = $totalSegments > 0 ? current($durationBuckets) : 0;
+
+        $result = [
+            'segments' => [],
+            'total_segments' => $totalSegments,
+            'sample_count' => count($indexes),
+            'domain' => parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST),
+            'header' => $parsed['header'],
+            'has_end' => $parsed['has_end'],
+        ];
+
+        if (empty($indexes) || $totalSegments === 0) {
+            return $result;
+        }
+
+        // 收集需要分析的片段
+        $batchSegments = [];
+        foreach ($indexes as $idx) {
+            if (isset($segments[$idx])) {
+                $batchSegments[$idx] = $segments[$idx];
+            }
+        }
+
+        if (empty($batchSegments)) {
+            return $result;
+        }
+
+        $actualConcurrency = SmartConcurrencyController::getOptimalConcurrency($this->maxConcurrency);
+
+        // 启发式预检测
+        $preChecked = [];
+        $needDownload = [];
+        foreach ($batchSegments as $idx => $seg) {
+            $heuristic = $this->heuristicCheckLight($seg, $idx, $totalSegments, $medianDuration, $mostCommonDuration, $mostCommonCount, $minDuration, $maxDuration);
+            if ($heuristic['confident']) {
+                $preChecked[$idx] = [
+                    'skip' => true,
+                    'is_ad' => $heuristic['is_ad'],
+                    'reason' => $heuristic['reason'],
+                    'status' => $heuristic['is_ad'] ? 'heuristic_ad_skip' : 'heuristic_content_skip',
+                    'score' => $heuristic['score'],
+                ];
+            } else {
+                $needDownload[$idx] = $seg;
+            }
+        }
+
+        $segmentResults = [];
+        if (!empty($needDownload)) {
+            if ($actualConcurrency > 1 && function_exists('curl_multi_init')) {
+                $segmentResults = $this->downloadSegmentsConcurrent($needDownload, $videoUrl, $actualConcurrency);
+            } else {
+                $segmentResults = $this->downloadSegmentsSequential($needDownload, $videoUrl);
+            }
+        }
+
+        $md5List = [];
+        foreach ($segmentResults as $r) {
+            if (!empty($r['md5'])) {
+                $md5List[] = $r['md5'];
+            }
+        }
+        $md5StatusMap = $this->db->queryBatch($md5List);
+
+        // 计算平均比特率
+        $avgBitrate = null;
+        $totalBytesForBitrate = 0;
+        $totalDurationForBitrate = 0;
+        foreach ($batchSegments as $idx => $seg) {
+            $r = $segmentResults[$idx] ?? ['success' => false, 'size' => 0];
+            if (!empty($r['success']) && !empty($r['size']) && $r['size'] > 0 && $seg['duration'] > 0) {
+                $totalBytesForBitrate += $r['size'];
+                $totalDurationForBitrate += $seg['duration'];
+            }
+        }
+        if ($totalDurationForBitrate > 0) {
+            $avgBitrate = ($totalBytesForBitrate * 8) / $totalDurationForBitrate;
+        }
+
+        foreach ($batchSegments as $idx => $seg) {
+            $fullUrl = $this->resolveUrl($videoUrl, $seg['uri']);
+
+            if (isset($preChecked[$idx])) {
+                $pre = $preChecked[$idx];
+                $result['segments'][] = [
+                    'index' => $idx,
+                    'duration' => $seg['duration'],
+                    'uri' => $seg['uri'],
+                    'full_url' => $fullUrl,
+                    'md5' => '',
+                    'size' => 0,
+                    'download_ms' => 0,
+                    'success' => true,
+                    'error' => '',
+                    'skipped_download' => true,
+                    'heuristic_score' => $pre['score'],
+                    'is_ad' => $pre['is_ad'],
+                    'reason' => $pre['reason'] . '(免下载)',
+                    'status' => $pre['status'],
+                    'is_sample' => true,
+                ];
+                continue;
+            }
+
+            $r = $segmentResults[$idx] ?? ['success' => false, 'md5' => '', 'size' => 0];
+
+            $segInfo = [
+                'index' => $idx,
+                'duration' => $seg['duration'],
+                'uri' => $seg['uri'],
+                'full_url' => $fullUrl,
+                'md5' => $r['success'] ? $r['md5'] : '',
+                'size' => $r['size'] ?? 0,
+                'download_ms' => $r['download_ms'] ?? 0,
+                'success' => $r['success'] ?? false,
+                'error' => $r['error'] ?? '',
+                'is_sample' => true,
+            ];
+
+            $isAd = false;
+            $reason = '';
+            $status = 'unknown';
+
+            if (!$r['success']) {
+                $status = 'download_failed';
+                $reason = '下载失败';
+            } else {
+                $md5 = $r['md5'];
+                $segInfo['md5'] = $md5;
+
+                $statusEntry = $md5StatusMap[$md5] ?? null;
+
+                if ($statusEntry) {
+                    if (!empty($statusEntry['is_whitelist'])) {
+                        $status = 'whitelist';
+                        $reason = '白名单-正片';
+                    } elseif (!empty($statusEntry['in_blacklist'])) {
+                        $status = 'blacklist';
+                        $reason = '黑名单-广告';
+                        $isAd = true;
+                    } elseif (!empty($statusEntry['is_ad'])) {
+                        $status = 'ad_identified';
+                        $reason = '已识别广告(' . $statusEntry['count'] . '次)';
+                        $isAd = true;
+                    } elseif ($statusEntry['count'] >= $this->md5RepeatThreshold) {
+                        $status = 'ad_high_freq';
+                        $reason = '高频广告(' . $statusEntry['count'] . '次)';
+                        $isAd = true;
+                        $this->db->markAsAd($md5, true);
+                    } else {
+                        $status = 'content_low_freq';
+                        $reason = '低频内容(' . $statusEntry['count'] . '次)';
+                    }
+                } else {
+                    $status = 'new_segment';
+                    $reason = '新片段(未记录)';
+
                     $segSize = $r['size'] ?? null;
                     $heuristicResult = $this->heuristicCheck($seg, $idx, $totalSegments, $medianDuration, $mostCommonDuration, $mostCommonCount, $minDuration, $maxDuration, $segSize, $avgBitrate);
                     if ($heuristicResult['is_ad']) {
@@ -1427,6 +1687,78 @@ class MD5PatternCleaner
      * @param float|null $avgBitrate 平均比特率
      * @return array ['is_ad' => bool, 'reason' => string, 'score' => int]
      */
+    /**
+     * 轻量级启发式检测（预检测用，无需下载，只用URL和时长判断）
+     * 返回 confident=true 表示可以跳过下载直接判定
+     */
+    public function heuristicCheckLight($seg, $index, $total, $medianDuration, $modeDuration, $modeCount, $minDuration, $maxDuration)
+    {
+        $score = 0;
+        $reasons = [];
+        $duration = $seg['duration'];
+        $uri = $seg['uri'];
+
+        if ($total <= 3 || $medianDuration <= 0) {
+            return ['is_ad' => false, 'reason' => '样本太少', 'score' => 0, 'confident' => false];
+        }
+
+        // === 规则1: URL 关键词强匹配（直接判定广告） ===
+        $uriLower = strtolower($uri);
+        $strongAdKeywords = ['ad/', 'advert', 'preroll', 'midroll', 'postroll', 'commercial', 'sponsor', '片头广告', '片中广告', '片尾广告', '/gg/', 'gg1.', 'gg2.', 'gg3.'];
+        foreach ($strongAdKeywords as $kw) {
+            if (strpos($uriLower, $kw) !== false) {
+                $score += 50;
+                $reasons[] = "URL强特征[$kw]";
+                break;
+            }
+        }
+
+        // === 规则2: 时长严重异常（远小于中位数的50% + 极短片段） ===
+        if ($medianDuration > 0) {
+            $ratio = $duration / $medianDuration;
+            if ($ratio < 0.2 && $duration < 3) {
+                $score += 40;
+                $reasons[] = "极短片段({$duration}s)";
+            } elseif ($ratio < 0.3) {
+                $score += 25;
+                $reasons[] = "时长短({$duration}s)";
+            }
+        }
+
+        // === 规则3: 时长与众数严重偏离（短于众数60%以上） ===
+        if ($modeDuration > 0 && $modeCount > $total * 0.4) {
+            $modeDiffRatio = ($modeDuration - $duration) / $modeDuration;
+            if ($modeDiffRatio > 0.6 && $duration < $modeDuration) {
+                $score += 20;
+                $reasons[] = "时长偏离众数(众数{$modeDuration}s)";
+            }
+        }
+
+        // === 判定是否足够自信可以跳过下载 ===
+        $confidentAd = ($score >= 50);
+        $confidentContent = false;
+
+        // 正片高置信判定：时长接近中位数(0.8-1.2倍) + 非片头片尾 + URL无广告特征
+        if ($score < 10 && $medianDuration > 0) {
+            $ratio = $duration / $medianDuration;
+            $headThreshold = min(3, (int)($total * 0.03));
+            $tailThreshold = $total - min(3, (int)($total * 0.03));
+            if ($ratio >= 0.85 && $ratio <= 1.15 && $index >= $headThreshold && $index < $tailThreshold) {
+                $confidentContent = true;
+            }
+        }
+
+        $isAd = $confidentAd;
+        $reason = implode(',', $reasons) ?: ($confidentContent ? '正片特征明显' : '特征不明显');
+
+        return [
+            'is_ad' => $isAd,
+            'reason' => $reason,
+            'score' => $score,
+            'confident' => ($confidentAd || $confidentContent),
+        ];
+    }
+
     public function heuristicCheck($seg, $index, $total, $medianDuration, $modeDuration, $modeCount, $minDuration, $maxDuration, $segmentSize = null, $avgBitrate = null)
     {
         $score = 0;

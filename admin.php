@@ -1,6 +1,6 @@
 <?php
 /**
- * 沫兮万能解析 - 管理后台（单文件集成版 v4.4）
+ * 沫兮万能解析 - 管理后台（单文件集成版 v4.5.1）
  * ------------------------------------------------------------
  * 原文件：admin.php + admin_tpl.php + admin_main.php + admin_style.css
  * 现全部整合到此文件中，便于部署与维护
@@ -725,7 +725,9 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         if ($ajaxEarlyAction === 'ajax_md5_deep_analyze') {
             @set_time_limit(0);
             @ignore_user_abort(true);
-            @ini_set('memory_limit', '256M');
+            @ini_set('memory_limit', '512M');
+            @ini_set('max_execution_time', '0');
+            @ini_set('default_socket_timeout', '120');
 
             $videoUrl = trim($_POST['video_url'] ?? '');
             $m3u8UrlInput = trim($_POST['m3u8_url'] ?? '');
@@ -745,14 +747,15 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 exit;
             }
 
-            // 不同模式的每批大小
+            // 不同模式的每批大小（优化后：提升并发吞吐量）
             $batchSizes = [
-                'quick' => 8,        // 快速：每批8段，只分析前30段
-                'standard' => 10,    // 标准：每批10段，分析全部
-                'slow' => 5,         // 慢速：每批5段，更稳定，分析全部
+                'quick' => 20,        // 快速：每批20段，抽样分析
+                'standard' => 30,     // 标准：每批30段，分析全部
+                'slow' => 15,         // 慢速：每批15段，更稳定，分析全部
+                'sample' => 15,       // 抽样模式：智能抽样，快速定位广告
             ];
-            $batchSize = isset($batchSizes[$scanMode]) ? $batchSizes[$scanMode] : 15;
-            $quickModeLimit = ($scanMode === 'quick') ? 30 : 0;
+            $batchSize = isset($batchSizes[$scanMode]) ? $batchSizes[$scanMode] : 20;
+            $quickModeLimit = ($scanMode === 'quick') ? 60 : 0;
 
             // 使用智能解析获取 M3U8 内容（第一次需要下载，后续批次用 session 缓存）
             $m3u8Content = null;
@@ -791,6 +794,48 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
 
             // 快速模式限制
             $segCount = substr_count($m3u8Content, '#EXTINF:');
+
+            // === 智能抽样模式：片头+片尾+中间抽样，大幅提速
+            $sampleIndexes = null;
+            if ($scanMode === 'sample') {
+                if ($offset === 0) {
+                    // 生成抽样索引：片头20% + 片尾20% + 中间均匀抽样20%
+                    $sampleCount = max(30, (int)($segCount * 0.25));
+                    $sampleIndexes = [];
+                    // 片头前25%
+                    $headCount = (int)($sampleCount * 0.35);
+                    for ($i = 0; $i < min($headCount, $segCount); $i++) {
+                        $sampleIndexes[] = $i;
+                    }
+                    // 片尾25%
+                    $tailCount = (int)($sampleCount * 0.35);
+                    for ($i = max(0, $segCount - $tailCount); $i < $segCount; $i++) {
+                        $sampleIndexes[] = $i;
+                    }
+                    // 中间均匀抽样40%
+                    $midCount = $sampleCount - $headCount - $tailCount;
+                    if ($midCount > 0) {
+                        $midStart = $headCount;
+                        $midEnd = $segCount - $tailCount - 1;
+                        if ($midEnd > $midStart) {
+                            $step = max(1, (int)(($midEnd - $midStart) / $midCount));
+                            for ($i = $midStart; $i < $midEnd; $i += $step) {
+                                $sampleIndexes[] = $i;
+                            }
+                        }
+                    }
+                    $sampleIndexes = array_unique($sampleIndexes);
+                    sort($sampleIndexes);
+                    @session_start();
+                    $_SESSION['md5_deep_sample_' . $cacheKey] = $sampleIndexes;
+                    session_write_close();
+                } else {
+                    @session_start();
+                    $sampleIndexes = $_SESSION['md5_deep_sample_' . $cacheKey] ?? null;
+                    session_write_close();
+                }
+            }
+
             $endOffset = $offset + $batchSize;
             if ($quickModeLimit > 0 && $endOffset > $quickModeLimit) {
                 $endOffset = $quickModeLimit;
@@ -798,12 +843,26 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             }
 
             // 执行本批次分析
-            $batchResult = $md5->deepAnalyzeBatch($m3u8Content, $finalM3u8Url, $offset, $batchSize);
-
-            $total = (int)$batchResult['total_segments'];
-            $actualBatch = count($batchResult['segments']);
-            $nextOffset = $offset + $actualBatch;
-            $hasMore = ($nextOffset < $total);
+            if ($scanMode === 'sample' && !empty($sampleIndexes)) {
+                // 智能抽样模式：从抽样索引中取一批
+                $sampleBatch = array_slice($sampleIndexes, $offset, $batchSize);
+                $batchResult = $md5->deepAnalyzeByIndexes($m3u8Content, $finalM3u8Url, $sampleBatch);
+                $total = (int)$batchResult['total_segments'];
+                $actualBatch = count($batchResult['segments']);
+                $nextOffset = $offset + $actualBatch;
+                $hasMore = ($nextOffset < count($sampleIndexes));
+                $isSampleMode = true;
+                $sampleTotal = count($sampleIndexes);
+            } else {
+                // 普通模式：顺序批量分析
+                $batchResult = $md5->deepAnalyzeBatch($m3u8Content, $finalM3u8Url, $offset, $batchSize);
+                $total = (int)$batchResult['total_segments'];
+                $actualBatch = count($batchResult['segments']);
+                $nextOffset = $offset + $actualBatch;
+                $hasMore = ($nextOffset < $total);
+                $isSampleMode = false;
+                $sampleTotal = 0;
+            }
 
             // 快速模式下，超过限制就不再继续
             if ($quickModeLimit > 0 && $nextOffset >= $quickModeLimit) {
@@ -857,6 +916,8 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 'cache_key' => $cacheKey,
                 'is_quick_mode' => ($quickModeLimit > 0),
                 'quick_limit' => $quickModeLimit,
+                'is_sample_mode' => $isSampleMode,
+                'sample_total' => $sampleTotal,
                 'clean_m3u8' => $cleanM3u8,
                 'ad_count_so_far' => $adCount,
             ];
@@ -1484,7 +1545,7 @@ function renderLoginPage($loginError = '') {
     <div class="login-box">
         <div class="login-icon">🎬</div>
         <h1>沫兮万能解析管理后台</h1>
-        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.4</div>
+        <div class="sub">PHP 智能线路切换 + NoAd 去广告解析 v4.5.1</div>
         <?php if (!empty($loginError)): ?><div class="err"><?php echo htmlspecialchars($loginError); ?></div><?php endif; ?>
         <form method="post">
             <input type="hidden" name="action" value="login">
@@ -1744,7 +1805,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>沫兮万能解析 - 管理后台 v4.4</title>
+<title>沫兮万能解析 - 管理后台 v4.5.1</title>
 <?php renderInlineStyles(); ?>
 </head>
 <body>
@@ -1752,7 +1813,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
     <header class="admin-header">
         <div>
             <h1>🎬 沫兮万能解析管理后台</h1>
-            <div class="sub">v4.4 · NoAd 去广告 + 智能线路切换（单文件版）</div>
+            <div class="sub">v4.5.1 · NoAd 去广告 + 智能线路切换（单文件版）</div>
         </div>
         <div style="display:flex;gap:12px;align-items:center;font-size:13px;flex-wrap:wrap">
             <span>NoAd <?php echo !empty($noadConfig['noad_enabled']) ? '<span class="badge badge-green">已启用</span>' : '<span class="badge badge-red">已关闭</span>'; ?></span>
@@ -2106,9 +2167,10 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <div style="flex:1;min-width:150px">
                         <label style="font-size:13px;color:#555;display:block;margin-bottom:4px">扫描模式</label>
                         <select id="deep_scan_mode" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
-                            <option value="quick">⚡ 快速（前30段·每批8段）</option>
-                            <option value="standard" selected>📊 标准（全部·每批10段）</option>
-                            <option value="slow">🐢 慢速（全部·每批5段·稳定）</option>
+                            <option value="quick">⚡ 极速（前60段·每批20段·快速检测）</option>
+                            <option value="sample">🎯 智能抽样（头尾+中间·快速定位广告）</option>
+                            <option value="standard" selected>📊 标准（全部·每批30段·均衡）</option>
+                            <option value="slow">🐢 稳定（全部·每批15段·低并发）</option>
                         </select>
                     </div>
                     <div style="flex:0">
@@ -6092,7 +6154,7 @@ function deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, offset, cacheKey) {
     formData.append('offset', offset);
     if (cacheKey) formData.append('cache_key', cacheKey);
 
-    deepFetchWithRetry(formData, 2, 90000)
+    deepFetchWithRetry(formData, 3, 180000)
         .then(function(data) {
             if (data.code !== 200) {
                 throw new Error(data.error || data.msg || '未知错误');
@@ -6106,12 +6168,13 @@ function deepAnalyzeNextBatch(videoUrl, m3u8Url, scanMode, offset, cacheKey) {
             _deepTotal = data.total_segments || 0;
 
             var analyzed = _deepAllSegments.length;
-            var total = data.is_quick_mode ? (data.quick_limit || _deepTotal) : _deepTotal;
+            var total = data.is_quick_mode ? (data.quick_limit || _deepTotal) : (data.is_sample_mode ? (data.sample_total || _deepTotal) : _deepTotal);
             var percent = total > 0 ? Math.min(100, Math.round(analyzed / total * 100)) : 0;
 
             // 更新进度
-            var modeText = { quick: '快速', standard: '标准', slow: '慢速' }[scanMode] || scanMode;
-            updateProgress(percent, analyzed, modeText + '模式 · 已分析 ' + analyzed + '/' + total + ' 段');
+            var modeText = { quick: '极速', sample: '智能抽样', standard: '标准', slow: '稳定' }[scanMode] || scanMode;
+            var modeSuffix = data.is_sample_mode ? ' (抽样' + analyzed + '/' + total + '·总' + _deepTotal + '段)' : '模式 · 已分析 ' + analyzed + '/' + total + ' 段';
+            updateProgress(percent, analyzed, modeText + modeSuffix);
 
             // 实时更新页面显示（增量）
             updateDeepResultDisplay(data.is_quick_mode, total);
@@ -6207,12 +6270,13 @@ function updateDeepResultDisplay(isQuickMode, total) {
 
     // 更新统计
     var statsDiv = document.getElementById('deep_stats');
-    var quickHint = isQuickMode ? '<div style="padding:8px 16px;background:#fffbeb;border-radius:6px;color:#d97706"><b>模式：</b>⚡ 快速抽样（' + analyzed + '/' + total + '段）</div>' : '';
+    var quickHint = isQuickMode ? '<div style="padding:8px 16px;background:#fffbeb;border-radius:6px;color:#d97706"><b>模式：</b>⚡ 极速抽样（' + analyzed + '/' + total + '段）</div>' : '';
+    var sampleHint = _deepAllSegments.length > 0 && _deepAllSegments[0].is_sample ? '<div style="padding:8px 16px;background:#ecfdf5;border-radius:6px;color:#059669"><b>模式：</b>🎯 智能抽样（' + analyzed + '/' + total + '·总' + _deepTotal + '段）</div>' : '';
     statsDiv.innerHTML = ''
-        + '<div style="padding:8px 16px;background:#f3f4f6;border-radius:6px"><b>总片段：</b>' + total + '</div>'
+        + '<div style="padding:8px 16px;background:#f3f4f6;border-radius:6px"><b>总片段：</b>' + _deepTotal + '</div>'
         + '<div style="padding:8px 16px;background:#fef2f2;border-radius:6px;color:#dc2626"><b>广告片段：</b>' + adCount + '</div>'
         + '<div style="padding:8px 16px;background:#f0fdf4;border-radius:6px;color:#059669"><b>正片片段：</b>' + contentCount + '</div>'
-        + quickHint;
+        + quickHint + sampleHint;
 
     // 更新域名
     document.getElementById('deep_domain').textContent = _deepDomain || '';
