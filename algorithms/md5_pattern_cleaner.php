@@ -54,11 +54,11 @@ class MD5PatternCleaner
     /** @var int MD5 出现次数达到此值视为广告（默认 3） */
     private $md5RepeatThreshold = 3;
 
-    /** @var int 最大并发下载数（会被动态调整） */
-    private $maxConcurrency = 6;
+    /** @var int 最大并发数（curl_multi） */
+    private $maxConcurrency = 12;
 
     /** @var int 多进程数（0=自动检测CPU核心数，-1=禁用多进程只用curl_multi） */
-    private $numProcesses = 4;
+    private $numProcesses = 8;
 
     /** @var int 单片段超时（秒） */
     private $segmentTimeout = 15;
@@ -140,6 +140,7 @@ class MD5PatternCleaner
             'enabled' => $this->enabled,
             'md5_repeat_threshold' => $this->md5RepeatThreshold,
             'max_concurrency' => $this->maxConcurrency,
+            'num_processes' => $this->numProcesses,
             'segment_timeout' => $this->segmentTimeout,
             'total_timeout' => $this->totalTimeout,
             'max_segment_size_kb' => $this->maxSegmentSizeKB,
@@ -147,6 +148,28 @@ class MD5PatternCleaner
             'proxy_count' => $this->ipGuard->getProxyCount(),
             'db_ready' => $this->db->isReady(),
         ];
+    }
+
+    /**
+     * 设置运行时参数（用于动态调整性能）
+     */
+    public function setRuntimeParams($params = [])
+    {
+        if (isset($params['max_concurrency']) && (int)$params['max_concurrency'] > 0) {
+            $this->maxConcurrency = min(32, max(1, (int)$params['max_concurrency']));
+        }
+        if (isset($params['num_processes']) && (int)$params['num_processes'] >= -1) {
+            $this->numProcesses = min(32, max(-1, (int)$params['num_processes']));
+        }
+        if (isset($params['segment_timeout']) && (int)$params['segment_timeout'] > 0) {
+            $this->segmentTimeout = min(120, max(5, (int)$params['segment_timeout']));
+        }
+        if (isset($params['total_timeout']) && (int)$params['total_timeout'] > 0) {
+            $this->totalTimeout = min(600, max(30, (int)$params['total_timeout']));
+        }
+        if (isset($params['max_segment_kb']) && (int)$params['max_segment_kb'] > 0) {
+            $this->maxSegmentSizeKB = min(50000, max(100, (int)$params['max_segment_kb']));
+        }
     }
 
     /**
@@ -864,19 +887,18 @@ class MD5PatternCleaner
     public function getOptimalProcessCount()
     {
         if ($this->numProcesses <= 0) {
-            // 自动检测：读取 CPU 核心数
-            $cpuCores = 4; // 默认4核
+            $cpuCores = 4;
             if (function_exists('posix_sysconf') && defined('_SC_NPROCESSORS_ONLN')) {
-                $cpuCores = (int)posix_sysconf(23); // _SC_NPROCESSORS_ONLN = 23
+                $cpuCores = (int)posix_sysconf(23);
             } elseif (is_readable('/proc/cpuinfo')) {
                 $cpuinfo = file_get_contents('/proc/cpuinfo');
                 preg_match_all('/^processor/m', $cpuinfo, $matches);
                 $cpuCores = count($matches[0]) ?: 4;
             }
-            return max(2, min(8, $cpuCores));
+            return max(4, min(16, $cpuCores));
         }
         if ($this->numProcesses < 0) {
-            return 0; // 禁用多进程
+            return 0;
         }
         return $this->numProcesses;
     }
