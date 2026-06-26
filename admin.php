@@ -250,6 +250,7 @@ $ajaxEarlyWhitelist = [
     'ajax_feat_test', 'ajax_feat_stats', 'ajax_feat_learn', 'ajax_feat_mark',
     'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
     'ajax_ad_snippet_fetch',
+    'ajax_online_update_check', 'ajax_online_update_do',
 ];
 if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
     header('Content-Type: application/json; charset=utf-8');
@@ -1187,9 +1188,440 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 echo json_encode(['code' => 200, 'domain' => $domain, 'type' => $type, 'type_name' => $typeName], JSON_UNESCAPED_UNICODE);
                 exit;
             }
+
+            if ($ajaxEarlyAction === 'ajax_online_update_check') {
+                @set_time_limit(60);
+                $updateConfigFile = __DIR__ . '/config/update.php';
+                $updateConfig = [];
+                if (file_exists($updateConfigFile)) {
+                    $updateConfig = require $updateConfigFile;
+                }
+                $githubRepo = $updateConfig['github_repo'] ?? 'ssmhdssmhd/MX-jx';
+                $githubBranch = $updateConfig['github_branch'] ?? 'main';
+                $useMirror = $updateConfig['use_mirror'] ?? 'auto';
+                $mirrorUrl = $updateConfig['mirror_url'] ?? 'https://ghproxy.com';
+
+                $currentVersion = 'unknown';
+                $versionFile = __DIR__ . '/VERSION';
+                if (file_exists($versionFile)) {
+                    $currentVersion = trim(file_get_contents($versionFile));
+                }
+
+                $apiUrl = 'https://api.github.com/repos/' . $githubRepo . '/commits/' . $githubBranch;
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_URL, $apiUrl);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+                curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
+                $response = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curlError = curl_error($ch);
+                curl_close($ch);
+
+                $latestVersion = '';
+                $latestDate = '';
+                $latestSha = '';
+                $needsUpdate = false;
+
+                if ($httpCode === 200 && $response) {
+                    $data = json_decode($response, true);
+                    if (!empty($data['sha'])) {
+                        $latestSha = substr($data['sha'], 0, 7);
+                        $latestVersion = $githubBranch . '-' . $latestSha;
+                        if (!empty($data['commit']['committer']['date'])) {
+                            $latestDate = $data['commit']['committer']['date'];
+                        }
+                        if ($currentVersion !== $latestVersion && $currentVersion !== 'unknown') {
+                            $needsUpdate = true;
+                        }
+                    }
+                }
+
+                echo json_encode([
+                    'code' => 200,
+                    'current_version' => $currentVersion,
+                    'latest_version' => $latestVersion,
+                    'latest_date' => $latestDate,
+                    'latest_sha' => $latestSha,
+                    'needs_update' => $needsUpdate,
+                    'github_repo' => $githubRepo,
+                    'github_branch' => $githubBranch,
+                    'http_code' => $httpCode,
+                    'curl_error' => $curlError,
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+
+            if ($ajaxEarlyAction === 'ajax_online_update_do') {
+                @set_time_limit(0);
+                @ignore_user_abort(true);
+                @ini_set('memory_limit', '256M');
+                @ini_set('max_execution_time', '0');
+
+                $force = !empty($_POST['force']) && $_POST['force'] === '1';
+                $updateConfigFile = __DIR__ . '/config/update.php';
+                $updateConfig = [];
+                if (file_exists($updateConfigFile)) {
+                    $updateConfig = require $updateConfigFile;
+                }
+                $githubRepo = $updateConfig['github_repo'] ?? 'ssmhdssmhd/MX-jx';
+                $githubBranch = $updateConfig['github_branch'] ?? 'main';
+                $useMirror = $updateConfig['use_mirror'] ?? 'auto';
+                $mirrorUrl = rtrim($updateConfig['mirror_url'] ?? 'https://ghproxy.com', '/');
+
+                $currentVersion = 'unknown';
+                $versionFile = __DIR__ . '/VERSION';
+                if (file_exists($versionFile)) {
+                    $currentVersion = trim(file_get_contents($versionFile));
+                }
+
+                $logMessages = [];
+                $logMessages[] = '[INFO] 开始在线更新...';
+                $logMessages[] = '[INFO] 当前版本: ' . $currentVersion;
+                $logMessages[] = '[INFO] 仓库: ' . $githubRepo . ' 分支: ' . $githubBranch;
+
+                $excludeFiles = [
+                    'config/', 'data/', '*.db', '*.sqlite', 'VERSION',
+                    'update_backups/', 'update_tmp/', 'update.sh', '.git/',
+                    'cache/', 'update_backups',
+                ];
+
+                $tmpDir = __DIR__ . '/update_tmp';
+                $backupDir = __DIR__ . '/update_backups';
+                if (!is_dir($backupDir)) {
+                    @mkdir($backupDir, 0755, true);
+                }
+
+                $zipFile = $tmpDir . '/moxi_latest.zip';
+                $extractedDir = '';
+
+                try {
+                    if (is_dir($tmpDir)) {
+                        onlineUpdateRemoveDir($tmpDir);
+                    }
+                    @mkdir($tmpDir, 0755, true);
+
+                    $logMessages[] = '[INFO] 检测网络环境...';
+                    $githubBase = 'https://github.com';
+                    if ($useMirror === 'yes') {
+                        $githubBase = $mirrorUrl . '/https://github.com';
+                        $logMessages[] = '[INFO] 已配置使用镜像: ' . $mirrorUrl;
+                    } elseif ($useMirror === 'auto') {
+                        $logMessages[] = '[INFO] 测试 GitHub 直连速度...';
+                        $ch = curl_init('https://github.com');
+                        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+                        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+                        curl_setopt($ch, CURLOPT_NOBODY, true);
+                        $startTime = microtime(true);
+                        @curl_exec($ch);
+                        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                        $elapsed = round((microtime(true) - $startTime) * 1000);
+                        curl_close($ch);
+                        if ($httpCode > 0 && $elapsed < 3000) {
+                            $logMessages[] = '[INFO] 直连正常 (' . $elapsed . 'ms)';
+                        } else {
+                            $githubBase = $mirrorUrl . '/https://github.com';
+                            $logMessages[] = '[WARN] 直连较慢或失败，自动切换镜像 (' . $elapsed . 'ms)';
+                        }
+                    } else {
+                        $logMessages[] = '[INFO] 不使用镜像';
+                    }
+
+                    $logMessages[] = '[INFO] 下载最新代码...';
+                    $zipUrl = $githubBase . '/' . $githubRepo . '/archive/refs/heads/' . $githubBranch . '.zip';
+                    $logMessages[] = '[INFO] 下载地址: ' . $zipUrl;
+
+                    $ch = curl_init();
+                    curl_setopt($ch, CURLOPT_URL, $zipUrl);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                    curl_setopt($ch, CURLOPT_TIMEOUT, 300);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
+                    curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
+                    curl_setopt($ch, CURLOPT_FILE, fopen($zipFile, 'w'));
+                    $downloadSuccess = curl_exec($ch);
+                    $downloadHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $downloadError = curl_error($ch);
+                    curl_close($ch);
+
+                    if (!$downloadSuccess || $downloadHttpCode !== 200 || !file_exists($zipFile) || filesize($zipFile) < 1024) {
+                        throw new Exception('下载失败: HTTP ' . $downloadHttpCode . ' - ' . $downloadError);
+                    }
+
+                    $zipSize = round(filesize($zipFile) / 1024 / 1024, 2);
+                    $logMessages[] = '[OK] 下载完成: ' . $zipSize . ' MB';
+
+                    $logMessages[] = '[INFO] 解压代码...';
+                    $zip = new ZipArchive();
+                    if ($zip->open($zipFile) !== true) {
+                        throw new Exception('解压失败: 无法打开 ZIP 文件');
+                    }
+                    $zip->extractTo($tmpDir);
+                    $zip->close();
+
+                    $dirs = glob($tmpDir . '/*', GLOB_ONLYDIR);
+                    if (empty($dirs)) {
+                        throw new Exception('解压失败: 未找到解压目录');
+                    }
+                    $extractedDir = $dirs[0];
+                    $logMessages[] = '[OK] 解压完成';
+
+                    $logMessages[] = '[INFO] 备份当前版本...';
+                    $backupName = 'backup_' . date('Ymd_His');
+                    $backupPath = $backupDir . '/' . $backupName;
+
+                    if (class_exists('ZipArchive') && function_exists('gzcompress')) {
+                        $backupZip = $backupPath . '.tar.gz';
+                        $backupSuccess = onlineUpdateBackupZip(__DIR__, $backupPath . '.zip', $excludeFiles);
+                        if ($backupSuccess) {
+                            $logMessages[] = '[OK] 备份完成: ' . basename($backupPath . '.zip');
+                        } else {
+                            $logMessages[] = '[WARN] ZIP 备份失败，尝试目录复制...';
+                            $backupSuccess = onlineUpdateBackupCopy(__DIR__, $backupPath, $excludeFiles);
+                            if ($backupSuccess) {
+                                $logMessages[] = '[OK] 备份完成 (目录方式): ' . $backupName;
+                            } else {
+                                $logMessages[] = '[WARN] 备份失败，继续更新...';
+                            }
+                        }
+                    } else {
+                        $backupSuccess = onlineUpdateBackupCopy(__DIR__, $backupPath, $excludeFiles);
+                        if ($backupSuccess) {
+                            $logMessages[] = '[OK] 备份完成 (目录方式): ' . $backupName;
+                        } else {
+                            $logMessages[] = '[WARN] 备份失败，继续更新...';
+                        }
+                    }
+
+                    $logMessages[] = '[INFO] 执行更新...';
+                    $updatedCount = 0;
+                    $skippedCount = 0;
+                    $updateResult = onlineUpdateCopyFiles($extractedDir, __DIR__, $excludeFiles, $updatedCount, $skippedCount);
+                    if (!$updateResult) {
+                        throw new Exception('更新文件时发生错误');
+                    }
+                    $logMessages[] = '[OK] 文件更新完成: 更新 ' . $updatedCount . ' 个，跳过 ' . $skippedCount . ' 个';
+
+                    $latestVersion = $githubBranch . '-' . substr(md5_file($zipFile), 0, 7);
+                    $apiUrl = 'https://api.github.com/repos/' . $githubRepo . '/commits/' . $githubBranch;
+                    $ch = curl_init();
+                    curl_setopt($ch, CURLOPT_URL, $apiUrl);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+                    curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
+                    $apiResp = @curl_exec($ch);
+                    curl_close($ch);
+                    if ($apiResp) {
+                        $apiData = json_decode($apiResp, true);
+                        if (!empty($apiData['sha'])) {
+                            $latestVersion = $githubBranch . '-' . substr($apiData['sha'], 0, 7);
+                        }
+                    }
+
+                    file_put_contents($versionFile, $latestVersion . "\n");
+                    file_put_contents($versionFile, "更新时间: " . date('Y-m-d H:i:s') . "\n", FILE_APPEND);
+                    $logMessages[] = '[OK] 版本号已更新: ' . $latestVersion;
+
+                    $logMessages[] = '[INFO] 检查 PHP 语法...';
+                    $phpErrorCount = 0;
+                    $phpCheckedCount = 0;
+                    if (function_exists('php_check_syntax') || function_exists('exec')) {
+                        $phpFiles = onlineUpdateScanPhpFiles(__DIR__);
+                        foreach ($phpFiles as $phpFile) {
+                            $phpCheckedCount++;
+                            if (function_exists('php_check_syntax')) {
+                                if (!php_check_syntax($phpFile)) {
+                                    $phpErrorCount++;
+                                    $logMessages[] = '[ERROR] 语法错误: ' . $phpFile;
+                                }
+                            } elseif (function_exists('exec')) {
+                                $output = [];
+                                $retCode = 0;
+                                @exec('php -l ' . escapeshellarg($phpFile) . ' 2>&1', $output, $retCode);
+                                if ($retCode !== 0) {
+                                    $phpErrorCount++;
+                                    $logMessages[] = '[ERROR] 语法错误: ' . $phpFile;
+                                }
+                            }
+                        }
+                    }
+                    if ($phpErrorCount > 0) {
+                        $logMessages[] = '[WARN] 发现 ' . $phpErrorCount . ' 个语法错误，已检查 ' . $phpCheckedCount . ' 个文件';
+                    } else {
+                        $logMessages[] = '[OK] 语法检查通过 (' . $phpCheckedCount . ' 个文件)';
+                    }
+
+                    $logMessages[] = '[INFO] 清理临时文件...';
+                    onlineUpdateRemoveDir($tmpDir);
+                    $logMessages[] = '[OK] 清理完成';
+
+                    $logMessages[] = '[SUCCESS] 更新完成！';
+                    $logMessages[] = '[INFO] 新版本: ' . $latestVersion;
+                    $logMessages[] = '[INFO] 更新时间: ' . date('Y-m-d H:i:s');
+                    if (!empty($backupPath)) {
+                        $logMessages[] = '[INFO] 备份文件: ' . basename($backupPath);
+                    }
+                    $logMessages[] = '[INFO] 请刷新页面查看更新效果';
+
+                    echo json_encode([
+                        'code' => 200,
+                        'success' => true,
+                        'logs' => $logMessages,
+                        'new_version' => $latestVersion,
+                    ], JSON_UNESCAPED_UNICODE);
+                    exit;
+
+                } catch (Exception $e) {
+                    $logMessages[] = '[ERROR] 更新失败: ' . $e->getMessage();
+                    if (is_dir($tmpDir)) {
+                        @onlineUpdateRemoveDir($tmpDir);
+                    }
+                    echo json_encode([
+                        'code' => 500,
+                        'success' => false,
+                        'logs' => $logMessages,
+                        'error' => $e->getMessage(),
+                    ], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+            }
         }
     }
     exit;
+}
+
+function onlineUpdateRemoveDir($dir) {
+    if (!is_dir($dir)) return false;
+    $items = scandir($dir);
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $path = $dir . '/' . $item;
+        if (is_dir($path)) {
+            onlineUpdateRemoveDir($path);
+        } else {
+            @unlink($path);
+        }
+    }
+    return @rmdir($dir);
+}
+
+function onlineUpdateShouldExclude($path, $baseDir, $excludeList) {
+    $relPath = str_replace($baseDir, '', $path);
+    $relPath = ltrim($relPath, '/\\');
+    foreach ($excludeList as $pattern) {
+        if (substr($pattern, -1) === '/') {
+            $dirName = rtrim($pattern, '/');
+            if ($relPath === $dirName || strpos($relPath, $dirName . '/') === 0) {
+                return true;
+            }
+        } elseif (strpos($pattern, '*') !== false) {
+            if (fnmatch($pattern, basename($path))) {
+                return true;
+            }
+        } else {
+            if ($relPath === $pattern) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function onlineUpdateCopyFiles($srcDir, $dstDir, $excludeList, &$updatedCount = 0, &$skippedCount = 0) {
+    $updatedCount = 0;
+    $skippedCount = 0;
+    $items = scandir($srcDir);
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $srcPath = $srcDir . '/' . $item;
+        $dstPath = $dstDir . '/' . $item;
+        if (onlineUpdateShouldExclude($dstPath, $dstDir, $excludeList)) {
+            $skippedCount++;
+            continue;
+        }
+        if (is_dir($srcPath)) {
+            if (!is_dir($dstPath)) {
+                @mkdir($dstPath, 0755, true);
+            }
+            onlineUpdateCopyFiles($srcPath, $dstPath, $excludeList, $subUpdated, $subSkipped);
+            $updatedCount += $subUpdated;
+            $skippedCount += $subSkipped;
+        } else {
+            if (is_file($dstPath) && md5_file($srcPath) === md5_file($dstPath)) {
+                $skippedCount++;
+            } else {
+                if (@copy($srcPath, $dstPath)) {
+                    $updatedCount++;
+                } else {
+                    $skippedCount++;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+function onlineUpdateBackupCopy($srcDir, $dstDir, $excludeList) {
+    if (!is_dir($dstDir)) {
+        @mkdir($dstDir, 0755, true);
+    }
+    $items = scandir($srcDir);
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $srcPath = $srcDir . '/' . $item;
+        $dstPath = $dstDir . '/' . $item;
+        if (onlineUpdateShouldExclude($srcPath, $srcDir, $excludeList)) {
+            continue;
+        }
+        if (is_dir($srcPath)) {
+            onlineUpdateBackupCopy($srcPath, $dstPath, $excludeList);
+        } else {
+            @copy($srcPath, $dstPath);
+        }
+    }
+    return true;
+}
+
+function onlineUpdateBackupZip($srcDir, $zipFile, $excludeList) {
+    if (!class_exists('ZipArchive')) return false;
+    $zip = new ZipArchive();
+    if ($zip->open($zipFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        return false;
+    }
+    $srcDir = rtrim($srcDir, '/');
+    $files = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($srcDir, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+    foreach ($files as $file) {
+        $filePath = $file->getRealPath();
+        if (onlineUpdateShouldExclude($filePath, $srcDir, $excludeList)) {
+            continue;
+        }
+        $relativePath = substr($filePath, strlen($srcDir) + 1);
+        $zip->addFile($filePath, $relativePath);
+    }
+    return $zip->close();
+}
+
+function onlineUpdateScanPhpFiles($dir) {
+    $phpFiles = [];
+    $excludeDirs = ['update_tmp', 'update_backups', 'cache', '.git', 'vendor'];
+    $items = scandir($dir);
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $path = $dir . '/' . $item;
+        if (is_dir($path)) {
+            if (in_array($item, $excludeDirs)) continue;
+            $subFiles = onlineUpdateScanPhpFiles($path);
+            $phpFiles = array_merge($phpFiles, $subFiles);
+        } elseif (pathinfo($path, PATHINFO_EXTENSION) === 'php') {
+            $phpFiles[] = $path;
+        }
+    }
+    return $phpFiles;
 }
 
 // ========= 未登录 → 显示登录页 =========
@@ -1336,6 +1768,34 @@ elseif ($action === 'create_backup') {
     if (file_exists(__DIR__ . '/config/noad.php')) @copy(__DIR__ . '/config/noad.php', $backupDir . '/noad.php');
     if (file_exists(__DIR__ . '/ZJK.txt')) @copy(__DIR__ . '/ZJK.txt', $backupDir . '/ZJK.txt');
     $msg = '备份已创建: ' . basename($backupDir);
+}
+elseif ($action === 'save_update_config') {
+    $newUpdateConfig = [
+        'github_repo' => trim($_POST['github_repo'] ?? 'ssmhdssmhd/MX-jx'),
+        'github_branch' => trim($_POST['github_branch'] ?? 'main'),
+        'use_mirror' => in_array($_POST['use_mirror'] ?? 'auto', ['auto', 'yes', 'no']) ? ($_POST['use_mirror'] ?? 'auto') : 'auto',
+        'mirror_url' => rtrim(trim($_POST['mirror_url'] ?? 'https://ghproxy.com'), '/'),
+    ];
+    writePhpFile(__DIR__ . '/config/update.php', buildPhpReturnArray($newUpdateConfig));
+    $msg = '更新设置已保存';
+    $page = 'system';
+}
+elseif ($action === 'delete_update_backup') {
+    $backupName = trim($_POST['backup_name'] ?? '');
+    $backupDir = __DIR__ . '/update_backups';
+    $backupPath = $backupDir . '/' . $backupName;
+    if ($backupName !== '' && (file_exists($backupPath) || is_dir($backupPath))) {
+        if (is_dir($backupPath)) {
+            onlineUpdateRemoveDir($backupPath);
+        } else {
+            @unlink($backupPath);
+        }
+        $msg = '备份已删除: ' . $backupName;
+    } else {
+        $msg = '备份不存在';
+        $msgType = 'error';
+    }
+    $page = 'system';
 }
 elseif ($action === 'clear_log') {
     if ($db) try { $db->clearAccessLog(); } catch (Exception $e) {}
@@ -2981,6 +3441,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
             <button data-subtab="sys_setting_new" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">⚙️ 后台设置</button>
             <button data-subtab="sys_cache_new" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">💽 缓存管理</button>
             <button data-subtab="sys_tools_new" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🧰 工具管理</button>
+            <button data-subtab="sys_online_update" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔄 在线更新</button>
         </div>
 
         <div class="sub-tab-panel active" id="subtab-sys_backup_new">
@@ -3087,6 +3548,136 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         <div>正在加载工具列表...</div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="sub-tab-panel" id="subtab-sys_online_update" style="display:none">
+            <div class="panel">
+                <h3>🔄 在线更新源码</h3>
+                <p style="color:#666;font-size:13px;margin-bottom:16px">一键从 GitHub 拉取最新代码，自动备份当前版本，更新完成后自动检查语法。</p>
+                <?php
+                $currentVersion = 'unknown';
+                $versionFile = __DIR__ . '/VERSION';
+                if (file_exists($versionFile)) {
+                    $currentVersion = trim(file_get_contents($versionFile));
+                }
+                $updateConfigFile = __DIR__ . '/config/update.php';
+                $updateConfig = [];
+                if (file_exists($updateConfigFile)) {
+                    $updateConfig = require $updateConfigFile;
+                }
+                $githubRepo = $updateConfig['github_repo'] ?? 'ssmhdssmhd/MX-jx';
+                $githubBranch = $updateConfig['github_branch'] ?? 'main';
+                $useMirror = $updateConfig['use_mirror'] ?? 'auto';
+                $mirrorUrl = $updateConfig['mirror_url'] ?? 'https://ghproxy.com';
+                ?>
+                <div style="background:#f8f9fa;padding:16px;border-radius:10px;margin-bottom:16px">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                        <span style="color:#666">当前版本：</span>
+                        <strong><?php echo htmlspecialchars($currentVersion); ?></strong>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                        <span style="color:#666">GitHub 仓库：</span>
+                        <strong><?php echo htmlspecialchars($githubRepo); ?></strong>
+                    </div>
+                    <div style="display:flex;justify-content:space-between">
+                        <span style="color:#666">更新分支：</span>
+                        <strong><?php echo htmlspecialchars($githubBranch); ?></strong>
+                    </div>
+                </div>
+                <div style="display:flex;gap:12px;flex-wrap:wrap">
+                    <button type="button" id="btnCheckUpdate" class="btn-primary-sm" onclick="checkOnlineUpdate()" style="font-size:14px;padding:10px 24px">🔍 检查更新</button>
+                    <button type="button" id="btnDoUpdate" class="btn-primary-sm" onclick="doOnlineUpdate()" style="font-size:14px;padding:10px 24px;background:linear-gradient(135deg,#ff6b6b,#ee5a6f);border:none;display:none">🚀 立即更新</button>
+                    <button type="button" id="btnForceUpdate" class="btn-secondary-sm" onclick="doOnlineUpdate(true)" style="font-size:14px;padding:10px 24px">⚡ 强制更新</button>
+                </div>
+                <div id="updateStatus" style="margin-top:20px;display:none">
+                    <div style="background:#f0f7ff;border:1px solid #b3d9ff;border-radius:10px;padding:16px">
+                        <div style="margin-bottom:8px;font-weight:bold;color:#0066cc">📡 更新进度</div>
+                        <div id="updateLog" style="font-family:monospace;font-size:13px;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;max-height:400px;overflow-y:auto;line-height:1.6">
+                            <div style="color:#94a3b8">等待更新开始...</div>
+                        </div>
+                        <div id="updateProgressBar" style="margin-top:12px;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;display:none">
+                            <div id="updateProgressInner" style="height:100%;background:linear-gradient(90deg,#4facfe,#00f2fe);width:0%;transition:width 0.3s"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel" style="margin-top:16px">
+                <h3>⚙️ 更新设置</h3>
+                <form method="post">
+                    <input type="hidden" name="action" value="save_update_config">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                        <label style="display:block;margin:10px 0">GitHub 仓库<br>
+                            <input type="text" name="github_repo" value="<?php echo htmlspecialchars($githubRepo); ?>" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:4px">
+                        </label>
+                        <label style="display:block;margin:10px 0">更新分支<br>
+                            <input type="text" name="github_branch" value="<?php echo htmlspecialchars($githubBranch); ?>" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:4px">
+                        </label>
+                    </div>
+                    <label style="display:block;margin:10px 0">镜像加速模式：<br>
+                        <select name="use_mirror" style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:4px">
+                            <option value="auto" <?php echo ($useMirror === 'auto') ? 'selected' : ''; ?>>自动检测（推荐）</option>
+                            <option value="yes" <?php echo ($useMirror === 'yes') ? 'selected' : ''; ?>>强制使用镜像</option>
+                            <option value="no" <?php echo ($useMirror === 'no') ? 'selected' : ''; ?>>不使用镜像</option>
+                        </select>
+                    </label>
+                    <label style="display:block;margin:10px 0">镜像地址<br>
+                        <input type="text" name="mirror_url" value="<?php echo htmlspecialchars($mirrorUrl); ?>" style="width:300px;padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:4px">
+                    </label>
+                    <div style="margin-top:16px">
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存更新设置</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="panel" style="margin-top:16px">
+                <h3>📦 版本备份管理</h3>
+                <p style="color:#666;font-size:13px;margin-bottom:12px">每次更新前会自动备份当前版本，可在此处管理备份文件。</p>
+                <?php
+                $updateBackupDir = __DIR__ . '/update_backups';
+                $updateBackups = [];
+                if (is_dir($updateBackupDir)) {
+                    foreach (glob($updateBackupDir . '/backup_*.tar.gz') as $f) {
+                        $updateBackups[] = $f;
+                    }
+                    foreach (glob($updateBackupDir . '/backup_*') as $f) {
+                        if (is_dir($f)) {
+                            $updateBackups[] = $f;
+                        }
+                    }
+                }
+                if (!empty($updateBackups)):
+                    rsort($updateBackups);
+                ?>
+                <table class="data-table">
+                    <thead><tr><th>备份名称</th><th>类型</th><th>大小</th><th>创建时间</th><th>操作</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($updateBackups as $bk):
+                        $isTar = substr($bk, -7) === '.tar.gz';
+                        $bkName = basename($bk);
+                        $bkSize = $isTar ? round(filesize($bk)/1024/1024, 2) . ' MB' : '目录';
+                        $bkTime = date('Y-m-d H:i:s', filemtime($bk));
+                    ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($bkName); ?></td>
+                            <td><?php echo $isTar ? '压缩包' : '目录'; ?></td>
+                            <td><?php echo $bkSize; ?></td>
+                            <td><?php echo $bkTime; ?></td>
+                            <td>
+                                <form method="post" style="display:inline;margin-right:8px" onsubmit="return confirm('确认删除此备份？')">
+                                    <input type="hidden" name="action" value="delete_update_backup">
+                                    <input type="hidden" name="backup_name" value="<?php echo htmlspecialchars($bkName); ?>">
+                                    <button type="submit" class="btn-danger-sm">🗑️ 删除</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php else: ?>
+                <p style="color:#888;text-align:center;padding:20px">暂无更新备份</p>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -5337,6 +5928,160 @@ https://cdn.example.com/video/part4.ts
                 if (tip.parentNode) tip.parentNode.removeChild(tip);
             }, 300);
         }, 1500);
+    }
+
+    function appendUpdateLog(msg) {
+        var logDiv = document.getElementById('updateLog');
+        if (!logDiv) return;
+        var line = document.createElement('div');
+        var color = '#e2e8f0';
+        if (msg.indexOf('[ERROR]') !== -1) color = '#fca5a5';
+        else if (msg.indexOf('[WARN]') !== -1) color = '#fcd34d';
+        else if (msg.indexOf('[OK]') !== -1) color = '#86efac';
+        else if (msg.indexOf('[SUCCESS]') !== -1) color = '#4ade80';
+        else if (msg.indexOf('[INFO]') !== -1) color = '#93c5fd';
+        line.style.color = color;
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function checkOnlineUpdate() {
+        var btn = document.getElementById('btnCheckUpdate');
+        var btnUpdate = document.getElementById('btnDoUpdate');
+        var statusDiv = document.getElementById('updateStatus');
+        var logDiv = document.getElementById('updateLog');
+
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '🔍 检查中...';
+        }
+
+        statusDiv.style.display = 'block';
+        logDiv.innerHTML = '<div style="color:#94a3b8">正在检查更新...</div>';
+
+        var formData = new FormData();
+        formData.append('action', 'ajax_online_update_check');
+
+        fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            logDiv.innerHTML = '';
+            if (data.code === 200) {
+                appendUpdateLog('[INFO] 当前版本: ' + data.current_version);
+                appendUpdateLog('[INFO] 最新版本: ' + (data.latest_version || '未知'));
+                if (data.latest_date) {
+                    appendUpdateLog('[INFO] 更新时间: ' + data.latest_date);
+                }
+                if (data.needs_update) {
+                    appendUpdateLog('[SUCCESS] 发现新版本！可以进行更新');
+                    if (btnUpdate) btnUpdate.style.display = 'inline-block';
+                } else if (data.latest_version) {
+                    appendUpdateLog('[OK] 当前已是最新版本');
+                    if (btnUpdate) btnUpdate.style.display = 'none';
+                } else {
+                    appendUpdateLog('[WARN] 无法获取最新版本信息，HTTP: ' + data.http_code);
+                    if (data.curl_error) {
+                        appendUpdateLog('[ERROR] ' + data.curl_error);
+                    }
+                    if (btnUpdate) btnUpdate.style.display = 'inline-block';
+                }
+            } else {
+                appendUpdateLog('[ERROR] 检查更新失败: ' + (data.msg || data.error || '未知错误'));
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🔍 检查更新';
+            }
+        })
+        .catch(function(err) {
+            appendUpdateLog('[ERROR] 网络错误: ' + err.message);
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🔍 检查更新';
+            }
+        });
+    }
+
+    function doOnlineUpdate(force) {
+        var btnCheck = document.getElementById('btnCheckUpdate');
+        var btnUpdate = document.getElementById('btnDoUpdate');
+        var btnForce = document.getElementById('btnForceUpdate');
+        var statusDiv = document.getElementById('updateStatus');
+        var logDiv = document.getElementById('updateLog');
+        var progressBar = document.getElementById('updateProgressBar');
+        var progressInner = document.getElementById('updateProgressInner');
+
+        if (!confirm(force ? '确认要强制更新吗？这将覆盖所有非配置文件！' : '确认要更新到最新版本吗？')) {
+            return;
+        }
+
+        if (btnCheck) btnCheck.disabled = true;
+        if (btnUpdate) btnUpdate.disabled = true;
+        if (btnForce) btnForce.disabled = true;
+        if (btnUpdate) btnUpdate.textContent = '🔄 更新中...';
+        if (btnForce) btnForce.textContent = '🔄 更新中...';
+
+        statusDiv.style.display = 'block';
+        progressBar.style.display = 'block';
+        progressInner.style.width = '5%';
+        logDiv.innerHTML = '<div style="color:#94a3b8">准备更新...</div>';
+
+        var formData = new FormData();
+        formData.append('action', 'ajax_online_update_do');
+        formData.append('force', force ? '1' : '0');
+
+        fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            logDiv.innerHTML = '';
+            if (data.logs && data.logs.length) {
+                data.logs.forEach(function(log) {
+                    appendUpdateLog(log);
+                });
+            }
+            if (data.code === 200 && data.success) {
+                progressInner.style.width = '100%';
+                progressInner.style.background = 'linear-gradient(90deg, #22c55e, #4ade80)';
+                appendUpdateLog('[SUCCESS] 更新完成！3秒后自动刷新页面...');
+                setTimeout(function() {
+                    window.location.reload();
+                }, 3000);
+            } else {
+                progressInner.style.width = '100%';
+                progressInner.style.background = 'linear-gradient(90deg, #ef4444, #f87171)';
+                appendUpdateLog('[ERROR] 更新失败: ' + (data.error || data.msg || '未知错误'));
+            }
+            if (btnCheck) btnCheck.disabled = false;
+            if (btnUpdate) {
+                btnUpdate.disabled = false;
+                btnUpdate.textContent = '🚀 立即更新';
+            }
+            if (btnForce) {
+                btnForce.disabled = false;
+                btnForce.textContent = '⚡ 强制更新';
+            }
+        })
+        .catch(function(err) {
+            appendUpdateLog('[ERROR] 网络错误: ' + err.message);
+            progressInner.style.width = '100%';
+            progressInner.style.background = 'linear-gradient(90deg, #ef4444, #f87171)';
+            if (btnCheck) btnCheck.disabled = false;
+            if (btnUpdate) {
+                btnUpdate.disabled = false;
+                btnUpdate.textContent = '🚀 立即更新';
+            }
+            if (btnForce) {
+                btnForce.disabled = false;
+                btnForce.textContent = '⚡ 强制更新';
+            }
+        });
     }
 
     document.addEventListener('DOMContentLoaded', function() {
