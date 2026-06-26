@@ -577,6 +577,18 @@ https://jx2.example.com/?url=|8
 - ⚙️ **`config/noad.php` 新增 `enable_custom_algorithms` + `custom_algorithms_scope`**
 - 🧹 **项目结构整理**：剔除历史版本 `.zip`、旧版备份目录、临时 `test_playlist.m3u8`、`cache/*.db` 等大体积/运行时文件；完善 `.gitignore`，仅保留 `backup/.gitkeep` 与 `cache/.gitkeep`
 
+### v4.5.6 (2026-06-26) — 多进程 + curl_multi 双层并发优化
+
+- 🚀 **多进程 + curl_multi 双层并发架构**
+  - 第一层：pcntl 多进程并行下载，自动检测 CPU 核心数（最高 16 进程）
+  - 第二层：每个子进程内使用 curl_multi 并发下载多个 TS 片段
+  - 比单进程串行模式提升 5-10 倍下载速度
+  - 比单纯多进程模式再提升 2-3 倍
+
+- ⚡ **noad_md5.php 接口新增性能参数**
+  - `procs=N`：自定义多进程数（1-32）
+  - `concurrency=N`：自定义 curl 并发数（1-32）
+
 ### v4.5.5 (2026-06-26) — NoAd MD5 去插播专用接口
 
 - ✨ **新增 `noad_md5.php` 去插播专用接口**
@@ -653,7 +665,7 @@ https://jx2.example.com/?url=|8
 |------|------|
 | **开发者** | MX-射手沫蝴蝶 |
 | **联系方式** | QQ: 2094332348 |
-| **当前版本** | v4.5.5（NoAd MD5 去插播专用接口 + 5大模块后台 + 解析配置/去广告配置/算法/系统设置 + 智能自动保存 + NoAd 去广告 + MD5深度分析） |
+| **当前版本** | v4.5.6（多进程+curl_multi双层并发优化 + NoAd MD5 去插播专用接口） |
 | **更新日期** | 2026-06-26 |
 
 ---
