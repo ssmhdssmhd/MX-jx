@@ -251,6 +251,7 @@ $ajaxEarlyWhitelist = [
     'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
     'ajax_ad_snippet_fetch',
     'ajax_online_update_check', 'ajax_online_update_do',
+    'ajax_batch_validate_apis',
 ];
 if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
     header('Content-Type: application/json; charset=utf-8');
@@ -588,6 +589,188 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
+    }
+
+    if ($ajaxEarlyAction === 'ajax_batch_validate_apis') {
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+
+        $testVideoUrl = 'https://www.iqiyi.com';
+        $apis = $_POST['apis'] ?? [];
+        $results = [];
+        $maxConcurrent = 10;
+        $total = count($apis);
+
+        if ($total === 0) {
+            echo json_encode(['code' => 400, 'error' => '没有接口需要验证'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $multiHandle = curl_multi_init();
+        $handles = [];
+        $startTime = microtime(true);
+
+        for ($i = 0; $i < min($total, $maxConcurrent); $i++) {
+            $api = $apis[$i];
+            if (empty($api['url'])) continue;
+
+            $ch = curl_init();
+            $testUrl = rtrim($api['url'], '/') . '/?url=' . urlencode($testVideoUrl);
+            curl_setopt($ch, CURLOPT_URL, $testUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, (int)($api['timeout'] ?? 5));
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+            curl_multi_add_handle($multiHandle, $ch);
+            $handles[$i] = [
+                'index' => $i,
+                'ch' => $ch,
+                'name' => $api['name'] ?? '接口' . ($i + 1),
+                'url' => $api['url'],
+                'timeout' => (int)($api['timeout'] ?? 5),
+                'start_time' => microtime(true),
+            ];
+        }
+
+        $running = null;
+        $completed = 0;
+        $processed = 0;
+
+        do {
+            curl_multi_exec($multiHandle, $running);
+            curl_multi_select($multiHandle, 0.1);
+
+            while ($info = curl_multi_info_read($multiHandle)) {
+                foreach ($handles as $key => $handle) {
+                    if ($handle['ch'] === $info['handle']) {
+                        $elapsed = round((microtime(true) - $handle['start_time']) * 1000);
+                        $response = curl_multi_getcontent($info['handle']);
+                        $httpCode = curl_getinfo($info['handle'], CURLINFO_HTTP_CODE);
+                        $error = curl_error($info['handle']);
+
+                        $status = 'unknown';
+                        $message = '';
+                        $isGood = false;
+
+                        if ($error) {
+                            $status = 'error';
+                            $message = '连接失败: ' . $error;
+                            $isGood = false;
+                        } elseif ($httpCode === 0) {
+                            $status = 'error';
+                            $message = '无法连接（超时或拒绝访问）';
+                            $isGood = false;
+                        } elseif ($httpCode >= 200 && $httpCode < 400) {
+                            if (!empty($response)) {
+                                $jsonData = json_decode($response, true);
+                                if ($jsonData !== null && (isset($jsonData['code']) || isset($jsonData['url']) || isset($jsonData['VideoInfo']))) {
+                                    $status = 'success';
+                                    $message = '正常 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+                                    $isGood = true;
+                                } elseif (strpos($response, 'url=') !== false || strpos($response, 'm3u8') !== false || strpos($response, 'mp4') !== false) {
+                                    $status = 'success';
+                                    $message = '正常 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+                                    $isGood = true;
+                                } else {
+                                    $status = 'warning';
+                                    $message = '响应异常 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+                                    $isGood = false;
+                                }
+                            } else {
+                                $status = 'warning';
+                                $message = '响应为空 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+                                $isGood = false;
+                            }
+                        } elseif ($httpCode >= 400 && $httpCode < 500) {
+                            $status = 'error';
+                            $message = '请求被拒绝 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+                            $isGood = false;
+                        } else {
+                            $status = 'error';
+                            $message = '服务器错误 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+                            $isGood = false;
+                        }
+
+                        $results[] = [
+                            'index' => $handle['index'],
+                            'name' => $handle['name'],
+                            'url' => $handle['url'],
+                            'status' => $status,
+                            'message' => $message,
+                            'is_good' => $isGood,
+                            'http_code' => $httpCode,
+                            'elapsed_ms' => $elapsed,
+                            'response_preview' => mb_substr($response, 0, 200),
+                        ];
+
+                        curl_multi_remove_handle($multiHandle, $info['handle']);
+                        curl_close($info['handle']);
+                        unset($handles[$key]);
+                        $completed++;
+                        $processed++;
+
+                        if ($processed < $total && $processed < $maxConcurrent) {
+                            $nextIndex = $processed;
+                            if (isset($apis[$nextIndex])) {
+                                $api = $apis[$nextIndex];
+                                if (!empty($api['url'])) {
+                                    $ch = curl_init();
+                                    $testUrl = rtrim($api['url'], '/') . '/?url=' . urlencode($testVideoUrl);
+                                    curl_setopt($ch, CURLOPT_URL, $testUrl);
+                                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                                    curl_setopt($ch, CURLOPT_TIMEOUT, (int)($api['timeout'] ?? 5));
+                                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+                                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                                    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                                    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                                    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+                                    curl_multi_add_handle($multiHandle, $ch);
+                                    $handles[$nextIndex] = [
+                                        'index' => $nextIndex,
+                                        'ch' => $ch,
+                                        'name' => $api['name'] ?? '接口' . ($nextIndex + 1),
+                                        'url' => $api['url'],
+                                        'timeout' => (int)($api['timeout'] ?? 5),
+                                        'start_time' => microtime(true),
+                                    ];
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        } while ($running > 0 && $completed < $total);
+
+        curl_multi_close($multiHandle);
+
+        $totalTime = round((microtime(true) - $startTime) * 1000);
+        $goodCount = count(array_filter($results, fn($r) => $r['is_good']));
+        $errorCount = count(array_filter($results, fn($r) => $r['status'] === 'error'));
+        $warningCount = count(array_filter($results, fn($r) => $r['status'] === 'warning'));
+
+        usort($results, function($a, $b) {
+            if ($a['is_good'] !== $b['is_good']) {
+                return $b['is_good'] - $a['is_good'];
+            }
+            return $a['elapsed_ms'] - $b['elapsed_ms'];
+        });
+
+        echo json_encode([
+            'code' => 200,
+            'total' => $total,
+            'good_count' => $goodCount,
+            'error_count' => $errorCount,
+            'warning_count' => $warningCount,
+            'total_time_ms' => $totalTime,
+            'results' => $results,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
     }
 
     if ($ajaxEarlyAction === 'ajax_parse_m3u8') {
@@ -2468,8 +2651,40 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                             tb.appendChild(tr);
                         " style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存全部</button>
+                        <button type="button" id="btnBatchValidate" class="btn-primary-sm" onclick="batchValidateApis()" style="font-size:14px;padding:8px 18px;background:linear-gradient(135deg,#11998e,#38ef7d);border:none;margin-left:8px">🔍 批量验证接口</button>
                     </div>
                 </form>
+            </div>
+
+            <div id="validateResultPanel" class="panel" style="margin-top:16px;display:none">
+                <h3>📊 批量验证结果</h3>
+                <div id="validateSummary" style="display:flex;gap:16px;margin:16px 0;flex-wrap:wrap">
+                    <div style="flex:1;min-width:120px;background:#dcfce7;padding:16px;border-radius:10px;text-align:center">
+                        <div style="font-size:32px;font-weight:bold;color:#166534" id="validateGood">-</div>
+                        <div style="color:#166534;font-size:13px">✅ 正常</div>
+                    </div>
+                    <div style="flex:1;min-width:120px;background:#fef9c3;padding:16px;border-radius:10px;text-align:center">
+                        <div style="font-size:32px;font-weight:bold;color:#854d0e" id="validateWarning">-</div>
+                        <div style="color:#854d0e;font-size:13px">⚠️ 异常</div>
+                    </div>
+                    <div style="flex:1;min-width:120px;background:#fee2e2;padding:16px;border-radius:10px;text-align:center">
+                        <div style="font-size:32px;font-weight:bold;color:#991b1b" id="validateError">-</div>
+                        <div style="color:#991b1b;font-size:13px">❌ 失败</div>
+                    </div>
+                    <div style="flex:1;min-width:120px;background:#f0f7ff;padding:16px;border-radius:10px;text-align:center">
+                        <div style="font-size:32px;font-weight:bold;color:#0066cc" id="validateTotal">-</div>
+                        <div style="color:#0066cc;font-size:13px">📦 总计</div>
+                    </div>
+                </div>
+                <div id="validateDetails" style="max-height:400px;overflow-y:auto">
+                    <table class="data-table" style="font-size:13px">
+                        <thead><tr><th>状态</th><th>接口名称</th><th>接口地址</th><th>响应时间</th><th>详细信息</th></tr></thead>
+                        <tbody id="validateResultBody"></tbody>
+                    </table>
+                </div>
+                <div style="margin-top:12px;text-align:center">
+                    <button type="button" class="btn-secondary-sm" onclick="closeValidateResult()" style="font-size:13px;padding:6px 16px">收起结果</button>
+                </div>
             </div>
         </div>
 
@@ -6010,6 +6225,124 @@ https://cdn.example.com/video/part4.ts
         line.textContent = msg;
         logDiv.appendChild(line);
         logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function batchValidateApis() {
+        var btn = document.getElementById('btnBatchValidate');
+        var tbody = document.getElementById('apiTbody_new');
+        var resultPanel = document.getElementById('validateResultPanel');
+        var resultBody = document.getElementById('validateResultBody');
+
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '🔄 验证中...';
+        }
+
+        var rows = tbody.querySelectorAll('tr');
+        var apis = [];
+        var hasData = false;
+
+        rows.forEach(function(row) {
+            var inputs = row.querySelectorAll('input');
+            if (inputs.length >= 3) {
+                var name = inputs[0].value.trim();
+                var url = inputs[1].value.trim();
+                var timeout = parseInt(inputs[2].value) || 5;
+                if (url !== '') {
+                    hasData = true;
+                    apis.push({ name: name, url: url, timeout: timeout });
+                }
+            }
+        });
+
+        if (!hasData) {
+            alert('请先添加要验证的接口！');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🔍 批量验证接口';
+            }
+            return;
+        }
+
+        resultPanel.style.display = 'block';
+        resultBody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#666">正在验证接口，请稍候...</td></tr>';
+
+        document.getElementById('validateGood').textContent = '-';
+        document.getElementById('validateWarning').textContent = '-';
+        document.getElementById('validateError').textContent = '-';
+        document.getElementById('validateTotal').textContent = apis.length;
+
+        var formData = new FormData();
+        formData.append('action', 'ajax_batch_validate_apis');
+        apis.forEach(function(api, index) {
+            formData.append('apis[' + index + '][name]', api.name);
+            formData.append('apis[' + index + '][url]', api.url);
+            formData.append('apis[' + index + '][timeout]', api.timeout);
+        });
+
+        fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                document.getElementById('validateGood').textContent = data.good_count;
+                document.getElementById('validateWarning').textContent = data.warning_count;
+                document.getElementById('validateError').textContent = data.error_count;
+                document.getElementById('validateTotal').textContent = data.total;
+
+                resultBody.innerHTML = '';
+                data.results.forEach(function(result) {
+                    var statusIcon = '';
+                    var statusColor = '';
+                    if (result.status === 'success') {
+                        statusIcon = '✅';
+                        statusColor = '#166534';
+                    } else if (result.status === 'warning') {
+                        statusIcon = '⚠️';
+                        statusColor = '#854d0e';
+                    } else {
+                        statusIcon = '❌';
+                        statusColor = '#991b1b';
+                    }
+
+                    var tr = document.createElement('tr');
+                    tr.style.background = result.is_good ? '#f0fdf4' : '#fef2f2';
+                    tr.innerHTML = '<td style="font-size:20px">' + statusIcon + '</td>' +
+                        '<td>' + htmlEscape(result.name || '未命名') + '</td>' +
+                        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + htmlEscape(result.url) + '">' + htmlEscape(result.url) + '</td>' +
+                        '<td>' + result.elapsed_ms + 'ms</td>' +
+                        '<td style="color:' + statusColor + ';font-size:12px">' + htmlEscape(result.message) + '</td>';
+                    resultBody.appendChild(tr);
+                });
+
+                if (data.results.length === 0) {
+                    resultBody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#666">没有找到有效的接口</td></tr>';
+                }
+            } else {
+                resultBody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#dc2626">验证失败: ' + (data.error || '未知错误') + '</td></tr>';
+            }
+
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🔍 批量验证接口';
+            }
+        })
+        .catch(function(err) {
+            resultBody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#dc2626">网络错误: ' + htmlEscape(err.message) + '</td></tr>';
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🔍 批量验证接口';
+            }
+        });
+    }
+
+    function closeValidateResult() {
+        var resultPanel = document.getElementById('validateResultPanel');
+        if (resultPanel) {
+            resultPanel.style.display = 'none';
+        }
     }
 
     function checkOnlineUpdate() {
