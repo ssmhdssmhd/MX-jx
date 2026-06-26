@@ -44,6 +44,8 @@ $url = $_GET['url'] ?? $_POST['url'] ?? '';
 $mode = $_GET['mode'] ?? 'redirect';
 $fast = isset($_GET['fast']) ? (int)$_GET['fast'] : 1;
 $force = isset($_GET['force']) ? (int)$_GET['force'] : 0;
+$processes = isset($_GET['processes']) ? (int)$_GET['processes'] : 0;
+$concurrency = isset($_GET['concurrency']) ? (int)$_GET['concurrency'] : 0;
 $callback = $_GET['callback'] ?? '';
 
 if (empty($url)) {

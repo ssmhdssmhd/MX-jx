@@ -663,65 +663,68 @@ class MD5PatternCleaner
                 $this->cleanupTempDir($tempDir);
                 return $this->downloadSegmentsConcurrent($segments, $videoUrl, min($numProcesses * 3, 12));
             } elseif ($pid == 0) {
-                // 子进程：处理分配的片段
+                // 子进程：处理分配的片段（使用 curl_multi 并发进一步加速）
                 $childResults = [];
                 $maxBytes = $this->maxSegmentSizeKB * 1024;
+                $childConcurrency = min(8, max(2, (int)ceil(count($chunk) / 2)));
 
-                foreach ($chunk as $item) {
-                    $idx = $item['index'];
-                    $seg = $item['seg'];
-                    $url = $this->resolveUrl($videoUrl, $seg['uri']);
-                    $startTime = microtime(true);
+                if ($childConcurrency > 1 && count($chunk) > 2 && function_exists('curl_multi_init')) {
+                    $childResults = $this->downloadChildConcurrent($chunk, $videoUrl, $maxBytes, $childConcurrency);
+                } else {
+                    foreach ($chunk as $item) {
+                        $idx = $item['index'];
+                        $seg = $item['seg'];
+                        $url = $this->resolveUrl($videoUrl, $seg['uri']);
+                        $startTime = microtime(true);
 
-                    $ch = curl_init($url);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_HEADER, false);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, $this->segmentTimeout);
-                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
-                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-                    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-                    curl_setopt($ch, CURLOPT_USERAGENT, $this->ipGuard ? $this->ipGuard->getRandomUA() : 'Mozilla/5.0');
-                    curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-                    curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:!DH');
+                        $ch = curl_init($url);
+                        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                        curl_setopt($ch, CURLOPT_HEADER, false);
+                        curl_setopt($ch, CURLOPT_TIMEOUT, $this->segmentTimeout);
+                        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+                        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                        curl_setopt($ch, CURLOPT_USERAGENT, $this->ipGuard ? $this->ipGuard->getRandomUA() : 'Mozilla/5.0');
+                        curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+                        curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:!DH');
 
-                    // 代理支持
-                    $proxyUsed = '';
-                    if ($this->useProxy && $this->ipGuard) {
-                        $proxyUsed = $this->ipGuard->configureCurl($ch, $videoUrl);
-                    }
-
-                    $data = curl_exec($ch);
-                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                    $curlError = curl_error($ch);
-                    $downloadMs = round((microtime(true) - $startTime) * 1000, 1);
-                    curl_close($ch);
-
-                    $origIndex = is_numeric($idx) ? $idx : $idx;
-                    if ($httpCode >= 200 && $httpCode < 300 && is_string($data) && strlen($data) > 0) {
-                        if (strlen($data) > $maxBytes) {
-                            $data = substr($data, 0, $maxBytes);
+                        $proxyUsed = '';
+                        if ($this->useProxy && $this->ipGuard) {
+                            $proxyUsed = $this->ipGuard->configureCurl($ch, $videoUrl);
                         }
-                        $md5 = md5($data);
-                        $childResults[$origIndex] = [
-                            'success' => true,
-                            'md5' => $md5,
-                            'size' => strlen($data),
-                            'download_ms' => $downloadMs,
-                            'proxy' => $proxyUsed,
-                        ];
-                    } else {
-                        $childResults[$origIndex] = [
-                            'success' => false,
-                            'md5' => '',
-                            'size' => 0,
-                            'download_ms' => $downloadMs,
-                            'error' => 'HTTP ' . $httpCode . ' - ' . ($curlError ?: '未知错误'),
-                        ];
+
+                        $data = curl_exec($ch);
+                        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                        $curlError = curl_error($ch);
+                        $downloadMs = round((microtime(true) - $startTime) * 1000, 1);
+                        curl_close($ch);
+
+                        $origIndex = is_numeric($idx) ? $idx : $idx;
+                        if ($httpCode >= 200 && $httpCode < 300 && is_string($data) && strlen($data) > 0) {
+                            if (strlen($data) > $maxBytes) {
+                                $data = substr($data, 0, $maxBytes);
+                            }
+                            $md5 = md5($data);
+                            $childResults[$origIndex] = [
+                                'success' => true,
+                                'md5' => $md5,
+                                'size' => strlen($data),
+                                'download_ms' => $downloadMs,
+                                'proxy' => $proxyUsed,
+                            ];
+                        } else {
+                            $childResults[$origIndex] = [
+                                'success' => false,
+                                'md5' => '',
+                                'size' => 0,
+                                'download_ms' => $downloadMs,
+                                'error' => 'HTTP ' . $httpCode . ' - ' . ($curlError ?: '未知错误'),
+                            ];
+                        }
                     }
                 }
 
-                // 将结果写入临时文件
                 file_put_contents($resultFile, json_encode($childResults, JSON_UNESCAPED_UNICODE));
                 exit(0);
             } else {
@@ -750,6 +753,108 @@ class MD5PatternCleaner
         $this->cleanupTempDir($tempDir);
 
         ksort($results);
+        return $results;
+    }
+
+    /**
+     * 子进程内使用 curl_multi 并发下载（多进程 + curl_multi 双层并发）
+     */
+    private function downloadChildConcurrent($chunk, $videoUrl, $maxBytes, $concurrency)
+    {
+        $results = [];
+        $items = [];
+        foreach ($chunk as $item) {
+            $items[] = $item;
+        }
+        $total = count($items);
+        $position = 0;
+
+        while ($position < $total) {
+            $batch = array_slice($items, $position, $concurrency);
+            $mh = curl_multi_init();
+            $handles = [];
+            $batchInfo = [];
+
+            foreach ($batch as $i => $item) {
+                $idx = $item['index'];
+                $seg = $item['seg'];
+                $url = $this->resolveUrl($videoUrl, $seg['uri']);
+
+                $ch = curl_init($url);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_HEADER, false);
+                curl_setopt($ch, CURLOPT_TIMEOUT, $this->segmentTimeout);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                curl_setopt($ch, CURLOPT_USERAGENT, $this->ipGuard ? $this->ipGuard->getRandomUA() : 'Mozilla/5.0');
+                curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+                curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT:!DH');
+                curl_setopt($ch, CURLOPT_NOSIGNAL, 1);
+
+                $proxyUsed = '';
+                if ($this->useProxy && $this->ipGuard) {
+                    $proxyUsed = $this->ipGuard->configureCurl($ch, $videoUrl);
+                }
+
+                $handles[$i] = $ch;
+                $batchInfo[$i] = [
+                    'index' => $idx,
+                    'start_time' => microtime(true),
+                    'proxy' => $proxyUsed,
+                ];
+                curl_multi_add_handle($mh, $ch);
+            }
+
+            $active = null;
+            do {
+                $mrc = curl_multi_exec($mh, $active);
+                if ($mrc != CURLM_OK) break;
+                curl_multi_select($mh, 0.5);
+            } while ($active > 0);
+
+            foreach ($handles as $i => $ch) {
+                $info = $batchInfo[$i];
+                $idx = $info['index'];
+                $startTime = $info['start_time'];
+                $proxyUsed = $info['proxy'];
+
+                $data = curl_multi_getcontent($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curlError = curl_error($ch);
+                $downloadMs = round((microtime(true) - $startTime) * 1000, 1);
+
+                curl_multi_remove_handle($mh, $ch);
+                curl_close($ch);
+
+                if ($httpCode >= 200 && $httpCode < 300 && is_string($data) && strlen($data) > 0) {
+                    if (strlen($data) > $maxBytes) {
+                        $data = substr($data, 0, $maxBytes);
+                    }
+                    $md5 = md5($data);
+                    $results[$idx] = [
+                        'success' => true,
+                        'md5' => $md5,
+                        'size' => strlen($data),
+                        'download_ms' => $downloadMs,
+                        'proxy' => $proxyUsed,
+                    ];
+                } else {
+                    $results[$idx] = [
+                        'success' => false,
+                        'md5' => '',
+                        'size' => 0,
+                        'download_ms' => $downloadMs,
+                        'error' => 'HTTP ' . $httpCode . ' - ' . ($curlError ?: '未知错误'),
+                    ];
+                }
+            }
+
+            curl_multi_close($mh);
+            $position += $concurrency;
+        }
+
         return $results;
     }
 
