@@ -1860,9 +1860,53 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         </div>
         <div class="panel">
             <h3>🚀 快速开始</h3>
-            <p><strong>📌 NoAd 去广告解析：</strong><br><code class="monocode">/index.php?url=视频播放地址&amp;type=movie|tv|variety|anime|document|sports|short</code></p>
-            <p><strong>📌 直接 API：</strong><br><code class="monocode">/noad_proxy.php?mode=api&amp;url=视频播放地址</code></p>
-            <p><strong>📌 M3U8 代理：</strong><br><code class="monocode">/noad_proxy.php?mode=m3u8&amp;src=https://example.com/play.m3u8</code></p>
+            <?php
+            $currentProto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+            if (isset($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+                $currentProto = $_SERVER['HTTP_X_FORWARDED_PROTO'];
+            }
+            $currentHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
+            $scriptName = $_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '/admin.php';
+            $currentPath = rtrim(dirname($scriptName), '/');
+            if ($currentPath === '.' || $currentPath === '\\') {
+                $currentPath = '';
+            }
+            $baseUrl = $currentProto . '://' . $currentHost . $currentPath;
+            $parseUrl = $baseUrl . '/?url=视频播放地址';
+            $parseUrlFull = $baseUrl . '/index.php?url=视频播放地址';
+            $qUrl = $baseUrl . '/q?url=M3U8地址';
+            $qPhpUrl = $baseUrl . '/q.php?url=M3U8地址';
+            ?>
+            <div style="margin-bottom:15px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <strong>🎬 视频解析接口：</strong>
+                    <button type="button" class="btn-copy" onclick="copyToClipboard('parse_url_1')" style="font-size:12px;padding:4px 10px;border:1px solid #ddd;background:#f5f5f5;border-radius:4px;cursor:pointer">📋 复制</button>
+                </div>
+                <code id="parse_url_1" class="monocode" style="display:block;padding:10px;background:#f8f9fa;border-radius:6px;border:1px solid #e9ecef;word-break:break-all;font-size:13px;margin:0"><?php echo htmlspecialchars($parseUrl); ?></code>
+            </div>
+            <div style="margin-bottom:15px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <strong>🎬 视频解析接口（完整路径）：</strong>
+                    <button type="button" class="btn-copy" onclick="copyToClipboard('parse_url_2')" style="font-size:12px;padding:4px 10px;border:1px solid #ddd;background:#f5f5f5;border-radius:4px;cursor:pointer">📋 复制</button>
+                </div>
+                <code id="parse_url_2" class="monocode" style="display:block;padding:10px;background:#f8f9fa;border-radius:6px;border:1px solid #e9ecef;word-break:break-all;font-size:13px;margin:0"><?php echo htmlspecialchars($parseUrlFull); ?>&amp;type=movie|tv|variety|anime|document|sports|short</code>
+            </div>
+            <hr style="border:none;border-top:1px dashed #ddd;margin:15px 0">
+            <div style="margin-bottom:15px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <strong>✂️ 去广告/去插播接口（短路径）：</strong>
+                    <button type="button" class="btn-copy" onclick="copyToClipboard('q_url_1')" style="font-size:12px;padding:4px 10px;border:1px solid #ddd;background:#f5f5f5;border-radius:4px;cursor:pointer">📋 复制</button>
+                </div>
+                <code id="q_url_1" class="monocode" style="display:block;padding:10px;background:#f8f9fa;border-radius:6px;border:1px solid #e9ecef;word-break:break-all;font-size:13px;margin:0"><?php echo htmlspecialchars($qUrl); ?></code>
+            </div>
+            <div style="margin-bottom:15px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <strong>✂️ 去广告/去插播接口（完整路径）：</strong>
+                    <button type="button" class="btn-copy" onclick="copyToClipboard('q_url_2')" style="font-size:12px;padding:4px 10px;border:1px solid #ddd;background:#f5f5f5;border-radius:4px;cursor:pointer">📋 复制</button>
+                </div>
+                <code id="q_url_2" class="monocode" style="display:block;padding:10px;background:#f8f9fa;border-radius:6px;border:1px solid #e9ecef;word-break:break-all;font-size:13px;margin:0"><?php echo htmlspecialchars($qPhpUrl); ?>&amp;fast=1&amp;force=0</code>
+            </div>
+            <p style="color:#666;font-size:13px;margin-top:10px">💡 提示：点击「📋 复制」按钮可一键复制接口地址，粘贴到浏览器或播放器中即可使用。</p>
         </div>
         <div class="panel">
             <h3>🔧 环境与权限检查</h3>
@@ -5243,6 +5287,56 @@ https://cdn.example.com/video/part4.ts
 
     function htmlEscape(s) {
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function copyToClipboard(elementId) {
+        var el = document.getElementById(elementId);
+        if (!el) return;
+        var text = el.innerText || el.textContent;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() {
+                showCopyTip(el);
+            }).catch(function() {
+                fallbackCopy(text, el);
+            });
+        } else {
+            fallbackCopy(text, el);
+        }
+    }
+
+    function fallbackCopy(text, el) {
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showCopyTip(el);
+        } catch (e) {
+            alert('复制失败，请手动复制');
+        }
+        document.body.removeChild(textarea);
+    }
+
+    function showCopyTip(el) {
+        var originalBorder = el.style.borderColor;
+        el.style.borderColor = '#28a745';
+        el.style.backgroundColor = '#f0fff4';
+        var tip = document.createElement('div');
+        tip.textContent = '✅ 已复制到剪贴板';
+        tip.style.cssText = 'position:fixed;top:20px;right:20px;background:#28a745;color:white;padding:10px 20px;border-radius:8px;z-index:9999;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,0.2);';
+        document.body.appendChild(tip);
+        setTimeout(function() {
+            el.style.borderColor = originalBorder;
+            el.style.backgroundColor = '#f8f9fa';
+            tip.style.opacity = '0';
+            tip.style.transition = 'opacity 0.3s';
+            setTimeout(function() {
+                if (tip.parentNode) tip.parentNode.removeChild(tip);
+            }, 300);
+        }, 1500);
     }
 
     document.addEventListener('DOMContentLoaded', function() {
