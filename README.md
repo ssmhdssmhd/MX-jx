@@ -577,6 +577,35 @@ https://jx2.example.com/?url=|8
 - ⚙️ **`config/noad.php` 新增 `enable_custom_algorithms` + `custom_algorithms_scope`**
 - 🧹 **项目结构整理**：剔除历史版本 `.zip`、旧版备份目录、临时 `test_playlist.m3u8`、`cache/*.db` 等大体积/运行时文件；完善 `.gitignore`，仅保留 `backup/.gitkeep` 与 `cache/.gitkeep`
 
+### v4.6.0 (2026-06-26) — 广告特征码自学习 + NoAd API 全面升级
+
+- 🎯 **广告特征码自动同步机制（自学习算法）**
+  - 深度分析识别的广告 MD5 自动存入指纹库（算法列表）
+  - 指纹库越用越准，相同广告后续秒级识别
+  - 支持白名单保护，正片内容永不误删
+  - 新增 `syncAdSignaturesToDB()` 方法实现特征码同步
+  - 新增 `getFingerprintStats()` 方法获取指纹库统计
+
+- ✨ **noad_md5.php 对外 API 全面升级**
+  - 专用去广告接口，用户直接调用获得无广告 M3U8
+  - 自动后台运行多线程 MD5 深度分析
+  - 自动过滤广告和插播片段
+  - 自动同步广告特征码到指纹库
+  - 生成 http/https 开头的纯净播放链接
+
+- ⚡ **缓存与性能优化**
+  - 智能缓存：30 分钟内相同 URL 秒开播放
+  - 异步模式 `async=1`：秒开 + 后台静默更新
+  - 缓存文件锁：防止并发重复分析
+  - 新增 `sync=1/0` 参数控制特征码自动同步
+  - 返回数据增强：sync_result、fingerprint_stats、cached_at 等
+
+- 🔧 **配置新增**
+  - `md5_auto_sync_signatures`：自动同步广告特征码（默认 true）
+  - `md5_num_processes`：默认多进程数（默认 8）
+  - `md5_max_concurrency`：默认并发数（默认 12）
+  - `cache_ttl_seconds`：缓存有效期（默认 1800 秒）
+
 ### v4.5.6 (2026-06-26) — 多进程 + curl_multi 双层并发优化
 
 - 🚀 **多进程 + curl_multi 双层并发架构**
@@ -665,7 +694,7 @@ https://jx2.example.com/?url=|8
 |------|------|
 | **开发者** | MX-射手沫蝴蝶 |
 | **联系方式** | QQ: 2094332348 |
-| **当前版本** | v4.5.6（多进程+curl_multi双层并发优化 + NoAd MD5 去插播专用接口） |
+| **当前版本** | v4.6.0（广告特征码自学习 + NoAd API 全面升级 + 多线程深度分析） |
 | **更新日期** | 2026-06-26 |
 
 ---

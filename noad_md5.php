@@ -11,11 +11,22 @@
  *   ?url=<M3U8地址>&force=1               // 强制重新分析（忽略缓存）
  *   ?url=<M3U8地址>&procs=8               // 多进程数（1-32，默认自动）
  *   ?url=<M3U8地址>&concurrency=12        // curl并发数（1-32，默认12）
+ *   ?url=<M3U8地址>&sync=1                // 同步广告特征码到指纹库（默认开启）
+ *   ?url=<M3U8地址>&async=1               // 异步模式：快速返回缓存，后台深度分析
+ *
+ * 核心机制：
+ *   1. 用户访问接口 → 自动运行多线程MD5深度分析
+ *   2. 识别广告和插播片段 → 自动过滤
+ *   3. 广告特征码自动同步到MD5指纹库（算法列表）
+ *   4. 生成缓存 → 后续相同请求直接返回，秒开播放
+ *   5. 指纹库累积越多，识别越准，速度越快
  *
  * 性能优化：
  *   - 多进程并行下载：自动检测CPU核心数，最高16进程
  *   - 子进程内curl_multi并发：每进程可同时下载多个TS片段
  *   - 智能抽样快速模式：仅分析约25%片段，速度提升4倍
+ *   - 智能缓存：30分钟内相同请求秒开
+ *   - 特征码自学习：越用越准，广告识别率持续提升
  *
  * 输出：
  *   默认：302 跳转到去广告后的 M3U8 链接
@@ -23,7 +34,7 @@
  *
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version v4.5.6
+ * @version v4.6.0
  */
 
 error_reporting(0);
@@ -53,6 +64,8 @@ $fast = isset($_GET['fast']) ? (int)$_GET['fast'] : 1;
 $force = isset($_GET['force']) ? (int)$_GET['force'] : 0;
 $procs = isset($_GET['procs']) ? (int)$_GET['procs'] : 0;
 $concurrency = isset($_GET['concurrency']) ? (int)$_GET['concurrency'] : 0;
+$sync = isset($_GET['sync']) ? (int)$_GET['sync'] : 1;
+$async = isset($_GET['async']) ? (int)$_GET['async'] : 0;
 $callback = $_GET['callback'] ?? '';
 
 if (empty($url)) {
@@ -60,6 +73,7 @@ if (empty($url)) {
         'code' => 400,
         'msg'  => '缺少 url 参数',
         'usage' => '?url=<M3U8地址>',
+        'version' => 'v4.6.0',
     ], $callback);
     exit;
 }
@@ -80,21 +94,54 @@ $cacheDir = __DIR__ . '/cache/noad_md5';
 $urlHash = md5($url);
 $cacheFile = $cacheDir . '/' . $urlHash . '.json';
 $cacheM3u8 = $cacheDir . '/' . $urlHash . '.m3u8';
+$lockFile = $cacheDir . '/' . $urlHash . '.lock';
 
 $cacheTtl = isset($noadCfg['cache_ttl_seconds']) ? (int)$noadCfg['cache_ttl_seconds'] : 1800;
+$autoSync = isset($noadCfg['md5_auto_sync_signatures']) ? (bool)$noadCfg['md5_auto_sync_signatures'] : true;
+
+$currentProto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$currentHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$currentPath = dirname($_SERVER['PHP_SELF'] ?? '/noad_md5.php');
+$cleanUrl = $currentProto . '://' . $currentHost . rtrim($currentPath, '/') . '/cache/noad_md5/' . $urlHash . '.m3u8';
 
 if (!$force && file_exists($cacheFile) && file_exists($cacheM3u8) && (time() - filemtime($cacheFile) < $cacheTtl)) {
     $cacheData = json_decode(file_get_contents($cacheFile), true);
-    if (is_array($cacheData) && !empty($cacheData['clean_url'])) {
+    if (is_array($cacheData) && !empty($cacheData['data']['clean_url'])) {
+        if ($async) {
+            triggerBackgroundAnalysis($url, $urlHash, $procs, $concurrency, $fast, $sync);
+        }
         if ($mode === 'json') {
             $cacheData['from_cache'] = true;
+            $cacheData['cached_at'] = filemtime($cacheFile);
+            $cacheData['cache_expires_in'] = $cacheTtl - (time() - filemtime($cacheFile));
             outputJson($cacheData, $callback);
         } else {
-            header('Location: ' . $cacheData['clean_url'], true, 302);
+            header('Location: ' . $cacheData['data']['clean_url'], true, 302);
         }
         exit;
     }
 }
+
+if ($async && file_exists($lockFile) && (time() - filemtime($lockFile) < 300)) {
+    if ($mode === 'json') {
+        outputJson([
+            'code' => 202,
+            'msg'  => '分析中，请稍后重试',
+            'data' => [
+                'original_url' => $url,
+                'status' => 'analyzing',
+                'retry_after' => 5,
+            ],
+        ], $callback);
+    } else {
+        header('Retry-After: 5');
+        http_response_code(202);
+        echo 'Analyzing... Please retry after 5 seconds.';
+    }
+    exit;
+}
+
+@file_put_contents($lockFile, time());
 
 try {
     $md5 = new MD5PatternCleaner();
@@ -108,6 +155,7 @@ try {
 
     $resolved = MD5PatternCleaner::resolveM3U8FromUrl($url);
     if ($resolved === false) {
+        @unlink($lockFile);
         outputJson([
             'code' => 502,
             'msg'  => '无法获取 M3U8 内容，请检查 URL 是否有效',
@@ -123,6 +171,7 @@ try {
     $totalSegments = count($segments);
 
     if ($totalSegments === 0) {
+        @unlink($lockFile);
         outputJson([
             'code' => 500,
             'msg'  => 'M3U8 中没有找到可解析的片段',
@@ -134,6 +183,7 @@ try {
         if (!empty($parsed['master_variants'])) {
             $firstVariant = $parsed['master_variants'][0];
             $variantUrl = $md5->resolveUrl($finalUrl, $firstVariant['uri']);
+            @unlink($lockFile);
             outputJson([
                 'code' => 300,
                 'msg'  => 'Master Playlist，请指定具体码率',
@@ -181,16 +231,11 @@ try {
 
     @file_put_contents($cacheM3u8, $cleanM3u8Content);
 
-    $currentProto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $currentHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $currentPath = dirname($_SERVER['PHP_SELF'] ?? '/noad_md5.php');
-    $cleanUrl = $currentProto . '://' . $currentHost . rtrim($currentPath, '/') . '/cache/noad_md5/' . $urlHash . '.m3u8';
-
     $deepAnalysis = null;
     $signatures = null;
-    $commercials = null;
     $adSignatures = null;
     $commercialBreaks = null;
+    $syncResult = null;
 
     if (is_array($analyzed) && method_exists($md5, 'deepAnalysisWithCommercials')) {
         $analyzedSegments = $analyzed['segments'] ?? [];
@@ -199,11 +244,21 @@ try {
         $adSignatures = $deepResult['ad_signatures'] ?? null;
         $signatures = $deepResult['signatures'] ?? null;
         $deepAnalysis = $deepResult;
+
+        if ($sync && $autoSync && !empty($adSignatures) && is_array($adSignatures)) {
+            $syncResult = $md5->syncAdSignaturesToDB($adSignatures, $url);
+        }
+    }
+
+    $fingerprintStats = null;
+    if (method_exists($md5, 'getFingerprintStats')) {
+        $fingerprintStats = $md5->getFingerprintStats();
     }
 
     $result = [
         'code' => 200,
         'msg'  => 'ok',
+        'version' => 'v4.6.0',
         'data' => [
             'original_url'       => $url,
             'final_url'          => $finalUrl,
@@ -214,15 +269,21 @@ try {
             'ad_ratio'           => $totalSegments > 0 ? round($adCount / $totalSegments * 100, 2) : 0,
             'fast_mode'          => (bool)$fast,
             'analysis_mode'      => $fast ? 'smart_sample' : 'full',
+            'auto_sync'          => (bool)($sync && $autoSync),
+            'sync_result'        => $syncResult,
+            'fingerprint_stats'  => $fingerprintStats,
             'ad_indexes'         => array_keys($adIndexes),
             'commercial_breaks'  => $commercialBreaks,
             'ad_signatures'      => $adSignatures,
             'signatures'         => $signatures,
             'deep_analysis'      => $deepAnalysis,
+            'cached_at'          => time(),
+            'cache_expires_in'   => $cacheTtl,
         ],
     ];
 
     @file_put_contents($cacheFile, json_encode($result, JSON_UNESCAPED_UNICODE));
+    @unlink($lockFile);
 
     if ($mode === 'json') {
         outputJson($result, $callback);
@@ -231,6 +292,7 @@ try {
     }
 
 } catch (Exception $e) {
+    @unlink($lockFile);
     outputJson([
         'code' => 500,
         'msg'  => '分析失败: ' . $e->getMessage(),
@@ -246,4 +308,42 @@ function outputJson($data, $callback = '')
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($data, JSON_UNESCAPED_UNICODE);
     }
+}
+
+function triggerBackgroundAnalysis($url, $urlHash, $procs, $concurrency, $fast, $sync)
+{
+    $cacheDir = __DIR__ . '/cache/noad_md5';
+    $lockFile = $cacheDir . '/' . $urlHash . '.lock';
+
+    if (file_exists($lockFile) && (time() - filemtime($lockFile) < 300)) {
+        return;
+    }
+
+    @file_put_contents($lockFile, time());
+
+    $phpBinary = PHP_BINARY;
+    if (empty($phpBinary) || !is_executable($phpBinary)) {
+        $phpBinary = 'php';
+    }
+
+    $scriptPath = __FILE__;
+    $query = http_build_query([
+        'url' => $url,
+        'mode' => 'json',
+        'fast' => $fast,
+        'force' => 1,
+        'procs' => $procs,
+        'concurrency' => $concurrency,
+        'sync' => $sync,
+        'bg' => 1,
+    ]);
+
+    $cmd = sprintf(
+        '%s %s %s > /dev/null 2>&1 &',
+        escapeshellarg($phpBinary),
+        escapeshellarg($scriptPath),
+        escapeshellarg($query)
+    );
+
+    @shell_exec($cmd);
 }

@@ -571,15 +571,18 @@ return array(
     // ===== MD5 指纹去广告参数（万能规则1） =================
     'md5_enabled' => true,
     'md5_repeat_threshold' => 3,
-    'md5_max_concurrency' => 6,
+    'md5_max_concurrency' => 12,
+    'md5_num_processes' => 8,
     'md5_segment_timeout' => 15,
     'md5_total_timeout' => 60,
     'md5_max_segment_kb' => 5000,
     'md5_use_proxy' => true,
     'md5_min_interval_ms' => 100,
     'md5_auto_learn' => true,
+    'md5_auto_sync_signatures' => true,
     'md5_db_cleanup_days' => 14,
     'md5_debug' => true,
+    'cache_ttl_seconds' => 1800,
     // ========================================================
     // ===== 批量解析特征学习参数（万能规则2） =================
     'feat_enabled' => true,

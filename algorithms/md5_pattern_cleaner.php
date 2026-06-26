@@ -2562,4 +2562,102 @@ class MD5PatternCleaner
             'signatures' => $signatures,
         ];
     }
+
+    /**
+     * 同步广告特征码到MD5指纹库（算法列表）
+     * 将深度分析识别出的广告MD5自动存入指纹库黑名单
+     * 后续相同MD5的片段会被直接识别为广告
+     *
+     * @param array $adSignatures 广告特征码数组 [['md5'=>'', 'size'=>'', 'duration'=>''], ...]
+     * @param string $videoUrl 来源视频URL（用于记录）
+     * @return array ['synced_count'=>int, 'new_count'=>int, 'existed_count'=>int]
+     */
+    public function syncAdSignaturesToDB($adSignatures, $videoUrl = '')
+    {
+        $syncedCount = 0;
+        $newCount = 0;
+        $existedCount = 0;
+
+        if (!is_array($adSignatures) || empty($adSignatures)) {
+            return ['synced_count' => 0, 'new_count' => 0, 'existed_count' => 0];
+        }
+
+        if (!$this->db || !$this->db->isReady()) {
+            return ['synced_count' => 0, 'new_count' => 0, 'existed_count' => 0];
+        }
+
+        $md5List = [];
+        foreach ($adSignatures as $sig) {
+            if (!empty($sig['md5'])) {
+                $md5 = strtolower(trim($sig['md5']));
+                if (strlen($md5) === 32 && ctype_xdigit($md5)) {
+                    $md5List[] = $md5;
+                }
+            }
+        }
+
+        $md5List = array_unique($md5List);
+        if (empty($md5List)) {
+            return ['synced_count' => 0, 'new_count' => 0, 'existed_count' => 0];
+        }
+
+        $statusMap = $this->db->queryBatch($md5List);
+
+        foreach ($adSignatures as $sig) {
+            if (empty($sig['md5'])) continue;
+
+            $md5 = strtolower(trim($sig['md5']));
+            if (strlen($md5) !== 32 || !ctype_xdigit($md5)) continue;
+
+            $size = isset($sig['size']) ? (int)$sig['size'] : 0;
+            $duration = isset($sig['duration']) ? (float)$sig['duration'] : 0;
+            $reason = isset($sig['reason']) ? $sig['reason'] : '深度分析自动识别';
+
+            $existing = $statusMap[$md5] ?? null;
+
+            if ($existing && !empty($existing['in_blacklist'])) {
+                $existedCount++;
+                $syncedCount++;
+                continue;
+            }
+
+            if ($existing && !empty($existing['is_whitelist'])) {
+                continue;
+            }
+
+            if (!$existing) {
+                $this->db->record($md5, $size, $duration, $videoUrl, '', 0, '', '');
+            }
+
+            $this->db->markAsAd($md5, true);
+            $newCount++;
+            $syncedCount++;
+        }
+
+        return [
+            'synced_count' => $syncedCount,
+            'new_count' => $newCount,
+            'existed_count' => $existedCount,
+        ];
+    }
+
+    /**
+     * 获取指纹库统计信息（供算法列表展示）
+     */
+    public function getFingerprintStats()
+    {
+        if (!$this->db || !$this->db->isReady()) {
+            return [
+                'total' => 0,
+                'ad_count' => 0,
+                'whitelist_count' => 0,
+                'total_segments' => 0,
+                'db_size' => 0,
+            ];
+        }
+
+        $stats = $this->db->getStats();
+        $stats['db_size'] = $this->db->getDbSize();
+        return $stats;
+    }
 }
