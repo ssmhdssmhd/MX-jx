@@ -3,7 +3,7 @@
  * PHP 智能线路切换 - 并发版 + Noad 去广告解析
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version 4.0.0
+ * @version v5.1.0
  *
  * 使用方法:
  *   /index.php?url=https://v.qq.com/x/cover/mzc00200mp8vo9l/r00421m6n7k.html
@@ -44,7 +44,7 @@ if (empty($url)) {
         'usage' => '/index.php?url=https://v.qq.com/...&type=movie|tv|variety|anime|document|sports|short',
         'developer' => 'MX-射手沫蝴蝶',
         'contact' => 'QQ: 2094332348',
-        'version' => '4.0.0',
+        'version' => 'v5.1.0',
         'timestamp' => time(),
     ), JSON_UNESCAPED_UNICODE);
     exit;

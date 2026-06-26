@@ -3,7 +3,7 @@
  * Noad 去广告解析系统配置
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version 4.0.0
+ * @version v5.1.0
  */
 
 return array(

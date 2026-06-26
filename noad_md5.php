@@ -34,7 +34,7 @@
  *
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version v4.6.0
+ * @version v5.1.0
  */
 
 error_reporting(0);
@@ -73,7 +73,7 @@ if (empty($url)) {
         'code' => 400,
         'msg'  => '缺少 url 参数',
         'usage' => '?url=<M3U8地址>',
-        'version' => 'v4.6.0',
+        'version' => 'v5.1.0',
     ], $callback);
     exit;
 }
@@ -258,7 +258,7 @@ try {
     $result = [
         'code' => 200,
         'msg'  => 'ok',
-        'version' => 'v4.6.0',
+        'version' => 'v5.1.0',
         'data' => [
             'original_url'       => $url,
             'final_url'          => $finalUrl,

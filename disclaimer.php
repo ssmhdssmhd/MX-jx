@@ -17,7 +17,7 @@ class Disclaimer {
             'developer' => [
                 'name' => 'MX-射手沫蝴蝶',
                 'contact' => 'QQ: 2094332348',
-                'version' => '3.0.0',
+                'version' => 'v5.1.0',
                 'update_date' => '2024-01-01'
             ]
         ];
