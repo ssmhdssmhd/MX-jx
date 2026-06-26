@@ -42,5 +42,25 @@ return [
      * 统一显示开关
      * 开启后，msg和url字段将显示相同的内容
      */
-    'enable_unified_display' => true
+    'enable_unified_display' => true,
+
+    /**
+     * NoAd 去广告系统总开关
+     * 开启后启用 M3U8 去广告、MD5 深度分析等功能
+     */
+    'noad_enabled' => true,
+
+    /**
+     * SQLite 数据库开关
+     * 开启后使用 SQLite 存储广告指纹库、访问统计等数据
+     * 关闭后使用内存缓存（重启后数据丢失）
+     */
+    'sqlite_enabled' => true,
+
+    /**
+     * 去插播广告开关
+     * 开启后自动识别并过滤 M3U8 中的广告和插播片段
+     * 可通过 /q?url= 接口调用去广告功能
+     */
+    'ad_remove_enabled' => true,
 ];

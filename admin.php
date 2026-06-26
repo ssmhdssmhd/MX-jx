@@ -1249,6 +1249,9 @@ elseif ($action === 'save_switch') {
         'enable_zjk_apis'   => isset($_POST['enable_zjk_apis']),
         'enable_m3u8_direct'=> isset($_POST['enable_m3u8_direct']),
         'enable_unified_display' => isset($_POST['enable_unified_display']),
+        'noad_enabled'      => isset($_POST['noad_enabled']),
+        'sqlite_enabled'    => isset($_POST['sqlite_enabled']),
+        'ad_remove_enabled' => isset($_POST['ad_remove_enabled']),
     ];
     $content = "<?php\nreturn array(\n";
     foreach ($newSw as $k => $v) {
@@ -1986,6 +1989,11 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_zjk_apis" <?php if (!empty($switchConfig['enable_zjk_apis'])) echo 'checked'; ?>> 启用 ZJK.txt 自定义接口</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_m3u8_direct" <?php if (!empty($switchConfig['enable_m3u8_direct'])) echo 'checked'; ?>> M3U8 直链快速通道</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_unified_display" <?php if (!empty($switchConfig['enable_unified_display'])) echo 'checked'; ?>> 统一响应格式</label>
+                    <hr style="border:none;border-top:1px dashed #ddd;margin:15px 0">
+                    <h3 style="margin:10px 0;font-size:16px">🎯 去广告系统</h3>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="noad_enabled" <?php if (!empty($switchConfig['noad_enabled'])) echo 'checked'; ?>> 启用 NoAd 去广告系统</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="sqlite_enabled" <?php if (!empty($switchConfig['sqlite_enabled'])) echo 'checked'; ?>> 启用 SQLite 数据库（指纹库持久化）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_enabled" <?php if (!empty($switchConfig['ad_remove_enabled'])) echo 'checked'; ?>> 启用去插播广告（/q?url= 接口）</label>
                     <div style="margin-top:12px">
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button>
                     </div>
@@ -3870,6 +3878,11 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_zjk_apis" <?php if (!empty($switchConfig['enable_zjk_apis'])) echo 'checked'; ?>> 启用 ZJK.txt 自定义接口</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_m3u8_direct" <?php if (!empty($switchConfig['enable_m3u8_direct'])) echo 'checked'; ?>> M3U8 直链快速通道</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_unified_display" <?php if (!empty($switchConfig['enable_unified_display'])) echo 'checked'; ?>> 统一响应格式</label>
+                    <hr style="border:none;border-top:1px dashed #ddd;margin:15px 0">
+                    <h3 style="margin:10px 0;font-size:16px">🎯 去广告系统</h3>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="noad_enabled" <?php if (!empty($switchConfig['noad_enabled'])) echo 'checked'; ?>> 启用 NoAd 去广告系统</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="sqlite_enabled" <?php if (!empty($switchConfig['sqlite_enabled'])) echo 'checked'; ?>> 启用 SQLite 数据库（指纹库持久化）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_enabled" <?php if (!empty($switchConfig['ad_remove_enabled'])) echo 'checked'; ?>> 启用去插播广告（/q?url= 接口）</label>
                     <div style="margin-top:12px">
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button>
                     </div>
