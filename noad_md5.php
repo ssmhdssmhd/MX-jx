@@ -5,10 +5,17 @@
  * 功能：自动运行 MD5 深度分析去广告，返回去广告后的 M3U8 链接
  *
  * 使用方式：
- *   ?url=<M3U8地址>           // 自动分析并返回去广告后的 M3U8 链接
- *   ?url=<M3U8地址>&mode=json // 返回 JSON 格式结果
- *   ?url=<M3U8地址>&fast=1    // 快速模式（智能抽样，约25%片段）
- *   ?url=<M3U8地址>&force=1   // 强制重新分析（忽略缓存）
+ *   ?url=<M3U8地址>                        // 自动分析并返回去广告后的 M3U8 链接
+ *   ?url=<M3U8地址>&mode=json             // 返回 JSON 格式结果
+ *   ?url=<M3U8地址>&fast=1                // 快速模式（智能抽样，约25%片段）
+ *   ?url=<M3U8地址>&force=1               // 强制重新分析（忽略缓存）
+ *   ?url=<M3U8地址>&procs=8               // 多进程数（1-32，默认自动）
+ *   ?url=<M3U8地址>&concurrency=12        // curl并发数（1-32，默认12）
+ *
+ * 性能优化：
+ *   - 多进程并行下载：自动检测CPU核心数，最高16进程
+ *   - 子进程内curl_multi并发：每进程可同时下载多个TS片段
+ *   - 智能抽样快速模式：仅分析约25%片段，速度提升4倍
  *
  * 输出：
  *   默认：302 跳转到去广告后的 M3U8 链接
@@ -91,6 +98,13 @@ if (!$force && file_exists($cacheFile) && file_exists($cacheM3u8) && (time() - f
 
 try {
     $md5 = new MD5PatternCleaner();
+
+    if ($procs > 0 || $concurrency > 0) {
+        $md5->setRuntimeParams([
+            'num_processes' => $procs,
+            'max_concurrency' => $concurrency,
+        ]);
+    }
 
     $resolved = MD5PatternCleaner::resolveM3U8FromUrl($url);
     if ($resolved === false) {
