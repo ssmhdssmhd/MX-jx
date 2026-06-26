@@ -274,9 +274,21 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         $mirrorUrl = $updateConfig['mirror_url'] ?? 'https://ghproxy.com';
 
         $currentVersion = 'unknown';
+        $currentSha = '';
         $versionFile = __DIR__ . '/VERSION';
         if (file_exists($versionFile)) {
-            $currentVersion = trim(file_get_contents($versionFile));
+            $content = trim(file_get_contents($versionFile));
+            $lines = explode("\n", $content);
+            $currentVersion = $lines[0] ?? 'unknown';
+            if (count($lines) > 1) {
+                $updates = [];
+                foreach ($lines as $line) {
+                    if (preg_match('/([a-f0-9]{7,40})/', $line, $m)) {
+                        $currentSha = $m[1];
+                        break;
+                    }
+                }
+            }
         }
 
         $apiUrl = 'https://api.github.com/repos/' . $githubRepo . '/commits/' . $githubBranch;
@@ -295,6 +307,7 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         $latestDate = '';
         $latestSha = '';
         $needsUpdate = false;
+        $updateMessage = '';
 
         if ($httpCode === 200 && $response) {
             $data = json_decode($response, true);
@@ -304,19 +317,35 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 if (!empty($data['commit']['committer']['date'])) {
                     $latestDate = $data['commit']['committer']['date'];
                 }
-                if ($currentVersion !== $latestVersion && $currentVersion !== 'unknown') {
+                if (empty($currentSha)) {
                     $needsUpdate = true;
+                    $updateMessage = '首次更新或版本号格式不完整';
+                } elseif ($currentSha !== $latestSha) {
+                    $needsUpdate = true;
+                    $updateMessage = '发现新版本，可用更新';
+                } else {
+                    $needsUpdate = false;
+                    $updateMessage = '当前已是最新版本';
                 }
+            } else {
+                $updateMessage = '无法获取最新版本信息';
+            }
+        } else {
+            $updateMessage = '网络请求失败: HTTP ' . $httpCode;
+            if (!empty($curlError)) {
+                $updateMessage .= ' - ' . $curlError;
             }
         }
 
         echo json_encode([
             'code' => 200,
             'current_version' => $currentVersion,
+            'current_sha' => $currentSha,
             'latest_version' => $latestVersion,
-            'latest_date' => $latestDate,
             'latest_sha' => $latestSha,
+            'latest_date' => $latestDate,
             'needs_update' => $needsUpdate,
+            'update_message' => $updateMessage,
             'github_repo' => $githubRepo,
             'github_branch' => $githubBranch,
             'http_code' => $httpCode,
@@ -3558,9 +3587,20 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <p style="color:#666;font-size:13px;margin-bottom:16px">一键从 GitHub 拉取最新代码，自动备份当前版本，更新完成后自动检查语法。</p>
                 <?php
                 $currentVersion = 'unknown';
+                $currentSha = '';
                 $versionFile = __DIR__ . '/VERSION';
                 if (file_exists($versionFile)) {
-                    $currentVersion = trim(file_get_contents($versionFile));
+                    $content = trim(file_get_contents($versionFile));
+                    $lines = explode("\n", $content);
+                    $currentVersion = $lines[0] ?? 'unknown';
+                    if (count($lines) > 1) {
+                        foreach ($lines as $line) {
+                            if (preg_match('/([a-f0-9]{7,40})/', $line, $m)) {
+                                $currentSha = $m[1];
+                                break;
+                            }
+                        }
+                    }
                 }
                 $updateConfigFile = __DIR__ . '/config/update.php';
                 $updateConfig = [];
@@ -3575,8 +3615,14 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <div style="background:#f8f9fa;padding:16px;border-radius:10px;margin-bottom:16px">
                     <div style="display:flex;justify-content:space-between;margin-bottom:8px">
                         <span style="color:#666">当前版本：</span>
-                        <strong><?php echo htmlspecialchars($currentVersion); ?></strong>
+                        <strong style="color:#667eea"><?php echo htmlspecialchars($currentVersion); ?></strong>
                     </div>
+                    <?php if (!empty($currentSha)): ?>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                        <span style="color:#666">当前 Commit：</span>
+                        <code style="background:#e9ecef;padding:2px 8px;border-radius:4px;font-size:12px"><?php echo htmlspecialchars($currentSha); ?></code>
+                    </div>
+                    <?php endif; ?>
                     <div style="display:flex;justify-content:space-between;margin-bottom:8px">
                         <span style="color:#666">GitHub 仓库：</span>
                         <strong><?php echo htmlspecialchars($githubRepo); ?></strong>
@@ -3585,6 +3631,25 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         <span style="color:#666">更新分支：</span>
                         <strong><?php echo htmlspecialchars($githubBranch); ?></strong>
                     </div>
+                </div>
+                <div id="updateStatusCard" style="background:#f0f7ff;border:1px solid #b3d9ff;border-radius:10px;padding:16px;margin-bottom:16px;display:none">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                        <span style="font-weight:bold;color:#0066cc">📡 版本检查结果</span>
+                        <span id="updateStatusBadge" style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:bold"></span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                        <span style="color:#666">最新版本：</span>
+                        <strong id="latestVersionDisplay">-</strong>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                        <span style="color:#666">最新 Commit：</span>
+                        <code id="latestShaDisplay" style="background:#e9ecef;padding:2px 8px;border-radius:4px;font-size:12px">-</code>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                        <span style="color:#666">更新时间：</span>
+                        <span id="latestDateDisplay" style="color:#666">-</span>
+                    </div>
+                    <div id="updateMessageDisplay" style="margin-top:12px;padding:10px;background:white;border-radius:8px;text-align:center;font-weight:bold"></div>
                 </div>
                 <div style="display:flex;gap:12px;flex-wrap:wrap">
                     <button type="button" id="btnCheckUpdate" class="btn-primary-sm" onclick="checkOnlineUpdate()" style="font-size:14px;padding:10px 24px">🔍 检查更新</button>
@@ -5950,6 +6015,12 @@ https://cdn.example.com/video/part4.ts
     function checkOnlineUpdate() {
         var btn = document.getElementById('btnCheckUpdate');
         var btnUpdate = document.getElementById('btnDoUpdate');
+        var statusCard = document.getElementById('updateStatusCard');
+        var statusBadge = document.getElementById('updateStatusBadge');
+        var latestVersionDisplay = document.getElementById('latestVersionDisplay');
+        var latestShaDisplay = document.getElementById('latestShaDisplay');
+        var latestDateDisplay = document.getElementById('latestDateDisplay');
+        var updateMessageDisplay = document.getElementById('updateMessageDisplay');
         var statusDiv = document.getElementById('updateStatus');
         var logDiv = document.getElementById('updateLog');
 
@@ -5957,6 +6028,18 @@ https://cdn.example.com/video/part4.ts
             btn.disabled = true;
             btn.textContent = '🔍 检查中...';
         }
+        if (btnUpdate) btnUpdate.style.display = 'none';
+
+        statusCard.style.display = 'block';
+        statusBadge.textContent = '检查中...';
+        statusBadge.style.background = '#e2e8f0';
+        statusBadge.style.color = '#64748b';
+        latestVersionDisplay.textContent = '加载中...';
+        latestShaDisplay.textContent = '-';
+        latestDateDisplay.textContent = '-';
+        updateMessageDisplay.textContent = '正在连接 GitHub...';
+        updateMessageDisplay.style.background = '#f0f7ff';
+        updateMessageDisplay.style.color = '#0066cc';
 
         statusDiv.style.display = 'block';
         logDiv.innerHTML = '<div style="color:#94a3b8">正在检查更新...</div>';
@@ -5972,25 +6055,59 @@ https://cdn.example.com/video/part4.ts
         .then(function(data) {
             logDiv.innerHTML = '';
             if (data.code === 200) {
+                latestVersionDisplay.textContent = data.latest_version || '未知';
+                latestShaDisplay.textContent = data.latest_sha || '-';
+                if (data.latest_date) {
+                    var date = new Date(data.latest_date);
+                    latestDateDisplay.textContent = date.toLocaleString('zh-CN');
+                }
+
                 appendUpdateLog('[INFO] 当前版本: ' + data.current_version);
+                appendUpdateLog('[INFO] 当前 Commit: ' + (data.current_sha || '未知'));
                 appendUpdateLog('[INFO] 最新版本: ' + (data.latest_version || '未知'));
+                appendUpdateLog('[INFO] 最新 Commit: ' + (data.latest_sha || '未知'));
                 if (data.latest_date) {
                     appendUpdateLog('[INFO] 更新时间: ' + data.latest_date);
                 }
+
                 if (data.needs_update) {
+                    statusBadge.textContent = '🎉 发现新版本';
+                    statusBadge.style.background = '#dcfce7';
+                    statusBadge.style.color = '#166534';
+                    updateMessageDisplay.textContent = data.update_message || '发现新版本，可以更新！';
+                    updateMessageDisplay.style.background = '#dcfce7';
+                    updateMessageDisplay.style.color = '#166534';
                     appendUpdateLog('[SUCCESS] 发现新版本！可以进行更新');
                     if (btnUpdate) btnUpdate.style.display = 'inline-block';
                 } else if (data.latest_version) {
+                    statusBadge.textContent = '✅ 已是最新';
+                    statusBadge.style.background = '#dbeafe';
+                    statusBadge.style.color = '#1e40af';
+                    updateMessageDisplay.textContent = data.update_message || '当前已是最新版本';
+                    updateMessageDisplay.style.background = '#dbeafe';
+                    updateMessageDisplay.style.color = '#1e40af';
                     appendUpdateLog('[OK] 当前已是最新版本');
                     if (btnUpdate) btnUpdate.style.display = 'none';
                 } else {
+                    statusBadge.textContent = '⚠️ 检查失败';
+                    statusBadge.style.background = '#fef9c3';
+                    statusBadge.style.color = '#854d0e';
+                    updateMessageDisplay.textContent = data.update_message || '无法获取最新版本信息';
+                    updateMessageDisplay.style.background = '#fef9c3';
+                    updateMessageDisplay.style.color = '#854d0e';
                     appendUpdateLog('[WARN] 无法获取最新版本信息，HTTP: ' + data.http_code);
                     if (data.curl_error) {
                         appendUpdateLog('[ERROR] ' + data.curl_error);
                     }
-                    if (btnUpdate) btnUpdate.style.display = 'inline-block';
+                    if (btnUpdate) btnUpdate.style.display = 'none';
                 }
             } else {
+                statusBadge.textContent = '❌ 错误';
+                statusBadge.style.background = '#fee2e2';
+                statusBadge.style.color = '#991b1b';
+                updateMessageDisplay.textContent = '检查更新失败';
+                updateMessageDisplay.style.background = '#fee2e2';
+                updateMessageDisplay.style.color = '#991b1b';
                 appendUpdateLog('[ERROR] 检查更新失败: ' + (data.msg || data.error || '未知错误'));
             }
             if (btn) {
@@ -5999,6 +6116,12 @@ https://cdn.example.com/video/part4.ts
             }
         })
         .catch(function(err) {
+            statusBadge.textContent = '❌ 网络错误';
+            statusBadge.style.background = '#fee2e2';
+            statusBadge.style.color = '#991b1b';
+            updateMessageDisplay.textContent = '网络连接失败';
+            updateMessageDisplay.style.background = '#fee2e2';
+            updateMessageDisplay.style.color = '#991b1b';
             appendUpdateLog('[ERROR] 网络错误: ' + err.message);
             if (btn) {
                 btn.disabled = false;
