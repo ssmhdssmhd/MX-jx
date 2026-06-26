@@ -1,5 +1,5 @@
 ========================================
-  MX-jx 项目结构说明 v4.3.0
+  MX-jx 项目结构说明 v5.1.2
 ========================================
 
 【整体架构】
@@ -16,7 +16,15 @@
 │  (解析接口入口)  │   │  (单文件后台)   │   │  (代理/清洗入口)  │
 └──────┬──────────┘   └──────┬──────────┘   └──────┬──────────┘
        │                      │                      │
+       ├──────────────────────┼──────────────────────┤
        ▼                      ▼                      ▼
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│  🧹 noad_md5.php│   │  ⚡ q.php       │   │  🔍 deep_analysis.php│
+│ (MD5去广告接口)  │   │ (去广告专用接口) │   │  (深度分析工具)   │
+└──────┬──────────┘   └──────┬──────────┘   └──────┬──────────┘
+       │                      │                      │
+       └──────────────────────┼──────────────────────┘
+                              ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                      🏗️  核心层 (core/)                          │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
@@ -24,8 +32,12 @@
 │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘            │
 │         ▼                 ▼                 ▼                   │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
-│  │✂️ NoAdParser │ │🗄️ Database   │ │📜 cache 目录  │            │
-│  └──────────────┘ └──────────────┘ └───────────────┘            │
+│  │✂️ NoAdParser │ │🗄️ Database   │ │⚡ SmartConcurrency │      │
+│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘            │
+│         ▼                 ▼                 ▼                   │
+│  ┌──────────────┐ ┌──────────────┐                            │
+│  │🔑 MD5FingerprintDB │ │📊 PatternFeatureDB │                 │
+│  └──────────────┘ └──────────────┘                            │
 └──────────────────────────────────────────────────────────────────┘
 
 ========================================
@@ -33,29 +45,39 @@
 
 MX-jx/
 │
-├── 🎯 入口文件（3 个）
+├── 🎯 入口文件（7 个）
 │   ├── index.php              ── 主入口，接收解析请求，返回 JSON
 │   ├── admin.php              ── 🔐 后台管理（单文件，整合 CSS+模板+逻辑+AJAX）
-│   └── noad_proxy.php         ── 🔄 NoAd 代理（M3U8 清洗 / TS 跨域 / 算法 API）
+│   ├── noad_proxy.php         ── 🔄 NoAd 代理（M3U8 清洗 / TS 跨域 / 算法 API）
+│   ├── noad_md5.php           ── 🧹 NoAd MD5 去插播专用接口（MD5 深度分析 + 自动去广告）
+│   ├── q.php                  ── ⚡ 去广告专用接口（简洁 JSON 格式，第三方调用友好）
+│   ├── deep_analysis.php      ── 🔍 深度分析工具页（M3U8 广告深度分析可视化）
+│   └── disclaimer.php         ── 📝 免责声明类（自动加载）
 │
-├── 📂 配置层（5 个，config/）
+├── 📂 配置层（6 个，config/）
 │   ├── api.php                ── API 线路配置（接口名称 → URL|超时）
 │   ├── platform.php           ── 平台规则配置（视频平台 → 优先接口）
-│   ├── switch.php             ── 系统开关（总接口/缓存/M3U8直链/ZJK）
+│   ├── switch.php             ── 系统开关（总接口/缓存/M3U8直链/ZJK/NoAd/SQLite/去插播）
 │   ├── admin.php              ── 后台配置（密码哈希/端口/IP白名单/会话）
-│   └── noad.php               ── NoAd 去广告（关键词/代理/速率/算法）
+│   ├── noad.php               ── NoAd 去广告（关键词/代理/速率/算法/MD5配置）
+│   ├── global_rules.php       ── 🌍 全局规则配置（通用广告规则/过滤规则）
+│   └── 配置.md                ── 📖 配置详细说明文档
 │
-├── 📂 核心层（5 个，core/）
+├── 📂 核心层（8 个，core/）
 │   ├── strategy.php           ── 🧠 Strategy：平台匹配 + 选优算法
 │   ├── requester.php          ── 🌐 Requester：curl_multi 并发请求引擎
 │   ├── cache.php              ── 💾 SmartCache：文件系统缓存（TTL 自动清理）
 │   ├── Database.php           ── 🗄️ SQLite：解析源/规则/统计/日志持久层
-│   └── NoAdParser.php         ── ✂️ NoAdParser：M3U8 广告过滤 + 资源站清理 + 自定义算法
+│   ├── NoAdParser.php         ── ✂️ NoAdParser：M3U8 广告过滤 + 资源站清理 + 自定义算法
+│   ├── MD5FingerprintDB.php   ── 🔑 MD5 指纹库：广告特征码存储与匹配（自学习）
+│   ├── PatternFeatureDB.php   ── 📊 模式特征库：广告模式特征提取与识别
+│   └── SmartConcurrency.php   ── ⚡ 智能并发：多进程 + curl_multi 双层并发架构
 │
-├── 📂 处理器层（1 个，handlers/）
-│   └── M3U8Handler.php        ── 🎬 M3U8 直链检测 + 快速响应（免解析流程）
+├── 📂 处理器层（2 个，handlers/）
+│   ├── M3U8Handler.php        ── 🎬 M3U8 直链检测 + 快速响应（免解析流程）
+│   └── 规则.md                ── 📖 M3U8 处理器规则说明
 │
-├── 📂 自定义算法扩展（7 个，algorithms/）
+├── 📂 自定义算法扩展（12 个，algorithms/）
 │   ├── AbstractAlgorithm.php  ── 算法基类（priority/scope/matchPatterns）
 │   ├── AlgorithmRegistry.php  ── 算法注册表（自动扫描/排序/作用域应用）
 │   ├── example_01_url_tracker_strip.php   ── URL 跟踪参数清洗示例
@@ -63,7 +85,30 @@ MX-jx/
 │   ├── example_03_domain_rewrite.php      ── 广告域名重写示例
 │   ├── example_04_m3u8_segment_cleaner.php ── M3U8 片段级清洗示例
 │   ├── example_05_protocol_normalize.php  ── 协议/路径规范化示例
-│   └── custom_template.php    ── 用户自定义算法模板（复制改写即可）
+│   ├── custom_template.php    ── 用户自定义算法模板（复制改写即可）
+│   ├── ruyi_pattern_cleaner.php    ── 🎯 如意算法：基于时长分布的智能广告识别
+│   ├── md5_pattern_cleaner.php     ── 🔑 MD5 指纹算法：基于片段 MD5 特征的广告匹配
+│   ├── pattern_feature_cleaner.php ── 📊 模式特征算法：基于文件名/大小模式的广告识别
+│   └── sequence_jump_cleaner.php   ── ⏭️ 序列跳跃算法：基于不连续点的插播识别
+│
+├── 📂 工具模块（8 个子模块，tools/）
+│   ├── core/
+│   │   ├── AbstractTool.php   ── 工具基类
+│   │   └── ToolManager.php    ── 工具管理器（注册/调用/生命周期）
+│   ├── ad_cleaner/
+│   │   └── AdCleanerTool.php  ── 🧹 广告清理工具
+│   ├── batch_parse/
+│   │   └── BatchParseTool.php ── 📋 批量解析工具
+│   ├── common_ad_rules/
+│   │   └── CommonAdRuleTool.php ── 📜 通用广告规则工具
+│   ├── feature_extractor/
+│   │   └── FeatureExtractorTool.php ── 🔬 特征提取工具
+│   ├── md5_ad_filter/
+│   │   └── MD5AdFilterTool.php ── 🔑 MD5 广告过滤工具
+│   ├── rule_update/
+│   │   └── RuleUpdateTool.php ── 🔄 规则自动更新工具
+│   ├── bootstrap.php          ── 工具模块启动引导
+│   └── handler.php            ── 工具请求处理器
 │
 ├── 📂 前端页面（4 个，html/，纯静态）
 │   ├── index.html             ── 🏠 首页/演示页（输入链接 → 解析 → 播放）
@@ -76,7 +121,27 @@ MX-jx/
 │   ├── 核心说明.md            ── 核心模块架构设计说明
 │   └── M3U8处理器规则.md      ── M3U8 匹配规则与响应格式说明
 │
+├── 📂 发布目录（dist/）
+│   ├── algorithms/            ── 算法文件（发布副本）
+│   ├── cache/                 ── 缓存目录（含 noad.db）
+│   ├── config/                ── 配置文件（发布副本）
+│   ├── core/                  ── 核心文件（发布副本）
+│   ├── html/                  ── 前端页面（发布副本）
+│   ├── tools/                 ── 工具模块（发布副本）
+│   ├── admin.php              ── 后台入口（发布副本）
+│   ├── index.php              ── 主入口（发布副本）
+│   ├── noad_proxy.php         ── 代理入口（发布副本）
+│   └── q.php                  ── 去广告接口（发布副本）
+│
+├── 📂 测试视频（test_video/）
+│   ├── test.m3u8              ── 测试用 M3U8 播放列表
+│   ├── ad_001.ts ~ ad_003.ts  ── 广告片段测试文件
+│   └── content_001.ts ~ content_005.ts ── 正片片段测试文件
+│
 ├── 📂 缓存目录（运行时，cache/）
+│   ├── batch_reports/         ── 批量解析报告
+│   ├── deep_analysis/         ── 深度分析结果
+│   ├── noad_md5/              ── NoAd MD5 缓存（JSON + M3U8）
 │   └── .gitkeep               ── 空目录占位（真实缓存不提交）
 │
 ├── 📂 备份目录（运行时，backup/）
@@ -84,22 +149,26 @@ MX-jx/
 │
 ├── 📝 其他文件
 │   ├── ZJK.txt                ── 自定义接口（每行一条，纯文本）
-│   ├── disclaimer.php         ── 免责声明类（自动加载）
+│   ├── cookies.txt            ── 🍪 Cookie 缓存文件
 │   ├── tests_smoke.php        ── 🧪 冒烟测试脚本（16 项快速验证）
+│   ├── test_noad_full.php     ── 🧪 NoAd 完整测试脚本
+│   ├── update.sh              ── 🔄 沫兮客户端自动更新脚本
 │   ├── README.md              ── 📖 项目说明文档
 │   ├── INSTALL.md             ── 🚀 新手安装指南（从零开始）
+│   ├── CHANGELOG.md           ── 📋 版本更新日志
 │   ├── .gitignore             ── Git 忽略规则（缓存/备份不提交）
+│   ├── .htaccess              ── Apache 伪静态 + 安全防护配置
 │   └── 项目结构.txt           ── 📄 本文件（当前正在阅读的结构说明）
 
 ========================================
 【核心数据流向】
 
-  1. 用户请求 → index.php
+  1. 用户请求 → index.php / q.php / noad_md5.php
      └─ 参数校验（URL 非空/格式/协议）
         └─ M3U8 直链检测 → 是 → 直接返回 JSON（M3U8-Direct-Output）
-        └─ 否 → 进入解析流程（Strategy + Requester）
+        └─ 否 → 进入对应处理流程
 
-  2. Strategy 决策引擎
+  2. Strategy 决策引擎（index.php 解析模式）
      └─ 匹配平台规则 → 获取优先接口
         └─ 聚合所有可用 API（api.php + ZJK.txt）
            └─ 传给 Requester
@@ -111,58 +180,61 @@ MX-jx/
               └─ 代理池轮换 + 速率限制（noad.php 配置）
                  └─ 统一响应格式（JSON）
 
-  4. NoAd 模式（mode=noad 或 auto 且启用）
+  4. NoAd / MD5 去广告模式（q.php / noad_md5.php / mode=noad）
      └─ NoAdParser
         └─ 资源站匹配清洗
            └─ M3U8 片段广告关键词过滤
-              └─ 自定义算法应用（algorithms/）
-                 └─ SQLite 记录统计
+              └─ 自定义算法应用（algorithms/ 如意/MD5/模式特征/序列跳跃）
+                 └─ SmartConcurrency 双层并发下载 TS 片段
+                    └─ MD5 指纹提取 + 特征码自学习（MD5FingerprintDB）
+                       └─ SQLite 记录统计
+
+  5. 工具模块（tools/）
+     └─ ToolManager 统一管理
+        └─ 广告清理 / 批量解析 / 特征提取 / 规则更新 等工具独立调用
 
 ========================================
-【admin.php 后台功能总览（18 个 Tab）】
+【admin.php 后台功能总览（5 大模块）】
 
   📊 仪表盘              ── PHP 版本/cURL/API 数量/环境检查/操作日志
-  📈 NoAd 数据统计       ── 近 7 天柱图/广告移除数/缓存命中率/访问日志
-  🔌 去广告解析源        ── NoAd 解析接口 CRUD（名称/URL/超时/启用状态）
-  🚫 广告规则库          ── 自定义广告关键词（优先级/启用/命中次数）
-  ⚙️ NoAd 设置          ── 缓存 TTL/超时/并发上限/关键词阈值/代理/速率限制
-  📺 M3U8 解析           ── 输入远程 M3U8 URL，解析片段并标记广告
-  🎬 资源站点            ── dytt/西瓜/如意/爱奇艺/腾讯/优酷/芒果 等规则管理
-  📄 解析日志            ── M3U8 解析操作日志（时间/站点/片段数/结果）
-  💽 缓存管理            ── 查看缓存目录/设置有效期/一键清理
-  📡 API 线路            ── 管理所有解析接口（添加/删除/测试）
-  🎯 平台规则            ── 视频平台 → 优先解析接口的映射规则
-  🎛️ 系统开关            ── 总接口/缓存/M3U8 直链/自定义接口 等开关
-  📝 自定义接口          ── ZJK.txt 在线编辑
-  🧪 接口测试            ── 在线并发测试所有接口，展示响应时间和有效性
-  🧩 自定义算法          ── 算法列表/启用禁用/重新扫描/本地测试/开发模板
-  💾 备份日志            ── 一键备份所有配置文件，生成时间戳压缩包
-  🔐 修改密码            ── 管理员密码修改（MD5 加密存储）
-  ⚙️ 后台设置            ── 端口限制/IP白名单/会话有效期/文件权限等安全配置
+  ───────────────────────────────────────────────────
+  🔧 解析配置            ── 解析接口管理 / 自定义解析 / 平台规则 / API 设置
+                          / 调用日志 / 解析日志 / 接口测试
+  ───────────────────────────────────────────────────
+  🚫 去广告配置          ── MD5 深度分析 / 总览 / 资源站设置 / 广告关键词规则
+                          / 解析源管理
+  ───────────────────────────────────────────────────
+  🧩 算法                ── 算法列表 / 如意算法 / MD5指纹算法 / 万能规则2
+                          / M3U8解析测试
+  ───────────────────────────────────────────────────
+  ⚙️ 系统设置            ── 配置备份 / 修改密码 / 后台设置 / 缓存管理
+                          / 工具管理 / 开关配置
 
 ========================================
 【文件数量统计】
 
-  入口文件：     3 个（index.php / admin.php / noad_proxy.php）
+  入口文件：     7 个（index/admin/noad_proxy/noad_md5/q/deep_analysis/disclaimer）
   后台文件：     1 个（admin.php 单文件整合）
-  配置文件：     5 个（config/*.php）
-  核心模块：     5 个（core/*.php）
+  配置文件：     6 个（config/*.php） + 1 个说明文档
+  核心模块：     8 个（core/*.php）
   处理器：       1 个（handlers/M3U8Handler.php）
-  自定义算法：   7 个（algorithms/*.php）
+  自定义算法：   12 个（algorithms/，含基类/注册表/5示例/4实算法/1模板）
+  工具模块：     8 个（tools/，含核心/6工具/引导/处理器）
   前端页面：     4 个（html/*.html）
-  文档：         4 个（README / INSTALL / docs/3个）
-  其他：         4 个（ZJK.txt / disclaimer.php / tests_smoke.php / .gitignore）
+  文档：         4 个（README / INSTALL / CHANGELOG / docs/3个）
+  测试文件：     2 个（tests_smoke.php / test_noad_full.php）
+  其他：         6 个（ZJK.txt / cookies.txt / update.sh / .gitignore / .htaccess / 项目结构.txt）
   ──────────────────────────────
-  总计：         约 30 个文件
+  总计：         约 50+ 个文件
 
 ========================================
 【版本信息】
 
   项目名称：  沫兮万能解析（MX-jx）
-  当前版本：  v4.3.0
-  版本日期：  2026-06-21
+  当前版本：  v5.1.2
+  版本日期：  2026-06-26
   开发语言：  PHP 7.4+
-  核心依赖：  cURL（curl_multi）/ pdo_sqlite（可选）
+  核心依赖：  cURL（curl_multi）/ pdo_sqlite（可选）/ pcntl（可选，多进程）
   代码仓库：  https://github.com/ssmhdssmhd/MX-jx
   开发者：    MX-射手沫蝴蝶
   联系方式：  QQ: 2094332348
