@@ -261,6 +261,306 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
         try { $db = Database::getInstance($noadConfig['sqlite_path']); } catch (Exception $e) { $db = null; }
     }
 
+    if ($ajaxEarlyAction === 'ajax_online_update_check') {
+        @set_time_limit(60);
+        $updateConfigFile = __DIR__ . '/config/update.php';
+        $updateConfig = [];
+        if (file_exists($updateConfigFile)) {
+            $updateConfig = require $updateConfigFile;
+        }
+        $githubRepo = $updateConfig['github_repo'] ?? 'ssmhdssmhd/MX-jx';
+        $githubBranch = $updateConfig['github_branch'] ?? 'main';
+        $useMirror = $updateConfig['use_mirror'] ?? 'auto';
+        $mirrorUrl = $updateConfig['mirror_url'] ?? 'https://ghproxy.com';
+
+        $currentVersion = 'unknown';
+        $versionFile = __DIR__ . '/VERSION';
+        if (file_exists($versionFile)) {
+            $currentVersion = trim(file_get_contents($versionFile));
+        }
+
+        $apiUrl = 'https://api.github.com/repos/' . $githubRepo . '/commits/' . $githubBranch;
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $apiUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        $latestVersion = '';
+        $latestDate = '';
+        $latestSha = '';
+        $needsUpdate = false;
+
+        if ($httpCode === 200 && $response) {
+            $data = json_decode($response, true);
+            if (!empty($data['sha'])) {
+                $latestSha = substr($data['sha'], 0, 7);
+                $latestVersion = $githubBranch . '-' . $latestSha;
+                if (!empty($data['commit']['committer']['date'])) {
+                    $latestDate = $data['commit']['committer']['date'];
+                }
+                if ($currentVersion !== $latestVersion && $currentVersion !== 'unknown') {
+                    $needsUpdate = true;
+                }
+            }
+        }
+
+        echo json_encode([
+            'code' => 200,
+            'current_version' => $currentVersion,
+            'latest_version' => $latestVersion,
+            'latest_date' => $latestDate,
+            'latest_sha' => $latestSha,
+            'needs_update' => $needsUpdate,
+            'github_repo' => $githubRepo,
+            'github_branch' => $githubBranch,
+            'http_code' => $httpCode,
+            'curl_error' => $curlError,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($ajaxEarlyAction === 'ajax_online_update_do') {
+        @set_time_limit(0);
+        @ignore_user_abort(true);
+        @ini_set('memory_limit', '256M');
+        @ini_set('max_execution_time', '0');
+
+        $force = !empty($_POST['force']) && $_POST['force'] === '1';
+        $updateConfigFile = __DIR__ . '/config/update.php';
+        $updateConfig = [];
+        if (file_exists($updateConfigFile)) {
+            $updateConfig = require $updateConfigFile;
+        }
+        $githubRepo = $updateConfig['github_repo'] ?? 'ssmhdssmhd/MX-jx';
+        $githubBranch = $updateConfig['github_branch'] ?? 'main';
+        $useMirror = $updateConfig['use_mirror'] ?? 'auto';
+        $mirrorUrl = rtrim($updateConfig['mirror_url'] ?? 'https://ghproxy.com', '/');
+
+        $currentVersion = 'unknown';
+        $versionFile = __DIR__ . '/VERSION';
+        if (file_exists($versionFile)) {
+            $currentVersion = trim(file_get_contents($versionFile));
+        }
+
+        $logMessages = [];
+        $logMessages[] = '[INFO] 开始在线更新...';
+        $logMessages[] = '[INFO] 当前版本: ' . $currentVersion;
+        $logMessages[] = '[INFO] 仓库: ' . $githubRepo . ' 分支: ' . $githubBranch;
+
+        $excludeFiles = [
+            'config/', 'data/', '*.db', '*.sqlite', 'VERSION',
+            'update_backups/', 'update_tmp/', 'update.sh', '.git/',
+            'cache/', 'update_backups',
+        ];
+
+        $tmpDir = __DIR__ . '/update_tmp';
+        $backupDir = __DIR__ . '/update_backups';
+        if (!is_dir($backupDir)) {
+            @mkdir($backupDir, 0755, true);
+        }
+
+        $zipFile = $tmpDir . '/moxi_latest.zip';
+        $extractedDir = '';
+
+        try {
+            if (is_dir($tmpDir)) {
+                onlineUpdateRemoveDir($tmpDir);
+            }
+            @mkdir($tmpDir, 0755, true);
+
+            $logMessages[] = '[INFO] 检测网络环境...';
+            $githubBase = 'https://github.com';
+            if ($useMirror === 'yes') {
+                $githubBase = $mirrorUrl . '/https://github.com';
+                $logMessages[] = '[INFO] 已配置使用镜像: ' . $mirrorUrl;
+            } elseif ($useMirror === 'auto') {
+                $logMessages[] = '[INFO] 测试 GitHub 直连速度...';
+                $ch = curl_init('https://github.com');
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+                curl_setopt($ch, CURLOPT_NOBODY, true);
+                $startTime = microtime(true);
+                @curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $elapsed = round((microtime(true) - $startTime) * 1000);
+                curl_close($ch);
+                if ($httpCode > 0 && $elapsed < 3000) {
+                    $logMessages[] = '[INFO] 直连正常 (' . $elapsed . 'ms)';
+                } else {
+                    $githubBase = $mirrorUrl . '/https://github.com';
+                    $logMessages[] = '[WARN] 直连较慢或失败，自动切换镜像 (' . $elapsed . 'ms)';
+                }
+            } else {
+                $logMessages[] = '[INFO] 不使用镜像';
+            }
+
+            $logMessages[] = '[INFO] 下载最新代码...';
+            $zipUrl = $githubBase . '/' . $githubRepo . '/archive/refs/heads/' . $githubBranch . '.zip';
+            $logMessages[] = '[INFO] 下载地址: ' . $zipUrl;
+
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $zipUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 300);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
+            $fp = fopen($zipFile, 'w');
+            curl_setopt($ch, CURLOPT_FILE, $fp);
+            $downloadSuccess = curl_exec($ch);
+            $downloadHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $downloadError = curl_error($ch);
+            curl_close($ch);
+            fclose($fp);
+
+            if (!$downloadSuccess || $downloadHttpCode !== 200 || !file_exists($zipFile) || filesize($zipFile) < 1024) {
+                throw new Exception('下载失败: HTTP ' . $downloadHttpCode . ' - ' . $downloadError);
+            }
+
+            $zipSize = round(filesize($zipFile) / 1024 / 1024, 2);
+            $logMessages[] = '[OK] 下载完成: ' . $zipSize . ' MB';
+
+            $logMessages[] = '[INFO] 解压代码...';
+            $zip = new ZipArchive();
+            if ($zip->open($zipFile) !== true) {
+                throw new Exception('解压失败: 无法打开 ZIP 文件');
+            }
+            $zip->extractTo($tmpDir);
+            $zip->close();
+
+            $dirs = glob($tmpDir . '/*', GLOB_ONLYDIR);
+            if (empty($dirs)) {
+                throw new Exception('解压失败: 未找到解压目录');
+            }
+            $extractedDir = $dirs[0];
+            $logMessages[] = '[OK] 解压完成';
+
+            $logMessages[] = '[INFO] 备份当前版本...';
+            $backupName = 'backup_' . date('Ymd_His');
+            $backupPath = $backupDir . '/' . $backupName;
+
+            if (class_exists('ZipArchive')) {
+                $backupSuccess = onlineUpdateBackupZip(__DIR__, $backupPath . '.zip', $excludeFiles);
+                if ($backupSuccess) {
+                    $logMessages[] = '[OK] 备份完成: ' . basename($backupPath . '.zip');
+                } else {
+                    $logMessages[] = '[WARN] ZIP 备份失败，尝试目录复制...';
+                    $backupSuccess = onlineUpdateBackupCopy(__DIR__, $backupPath, $excludeFiles);
+                    if ($backupSuccess) {
+                        $logMessages[] = '[OK] 备份完成 (目录方式): ' . $backupName;
+                    } else {
+                        $logMessages[] = '[WARN] 备份失败，继续更新...';
+                    }
+                }
+            } else {
+                $backupSuccess = onlineUpdateBackupCopy(__DIR__, $backupPath, $excludeFiles);
+                if ($backupSuccess) {
+                    $logMessages[] = '[OK] 备份完成 (目录方式): ' . $backupName;
+                } else {
+                    $logMessages[] = '[WARN] 备份失败，继续更新...';
+                }
+            }
+
+            $logMessages[] = '[INFO] 执行更新...';
+            $updatedCount = 0;
+            $skippedCount = 0;
+            $updateResult = onlineUpdateCopyFiles($extractedDir, __DIR__, $excludeFiles, $updatedCount, $skippedCount);
+            if (!$updateResult) {
+                throw new Exception('更新文件时发生错误');
+            }
+            $logMessages[] = '[OK] 文件更新完成: 更新 ' . $updatedCount . ' 个，跳过 ' . $skippedCount . ' 个';
+
+            $latestVersion = $githubBranch . '-' . substr(md5_file($zipFile), 0, 7);
+            $apiUrl = 'https://api.github.com/repos/' . $githubRepo . '/commits/' . $githubBranch;
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $apiUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
+            $apiResp = @curl_exec($ch);
+            curl_close($ch);
+            if ($apiResp) {
+                $apiData = json_decode($apiResp, true);
+                if (!empty($apiData['sha'])) {
+                    $latestVersion = $githubBranch . '-' . substr($apiData['sha'], 0, 7);
+                }
+            }
+
+            file_put_contents($versionFile, $latestVersion . "\n");
+            file_put_contents($versionFile, "更新时间: " . date('Y-m-d H:i:s') . "\n", FILE_APPEND);
+            $logMessages[] = '[OK] 版本号已更新: ' . $latestVersion;
+
+            $logMessages[] = '[INFO] 检查 PHP 语法...';
+            $phpErrorCount = 0;
+            $phpCheckedCount = 0;
+            if (function_exists('php_check_syntax') || function_exists('exec')) {
+                $phpFiles = onlineUpdateScanPhpFiles(__DIR__);
+                foreach ($phpFiles as $phpFile) {
+                    $phpCheckedCount++;
+                    if (function_exists('php_check_syntax')) {
+                        if (!php_check_syntax($phpFile)) {
+                            $phpErrorCount++;
+                            $logMessages[] = '[ERROR] 语法错误: ' . $phpFile;
+                        }
+                    } elseif (function_exists('exec')) {
+                        $output = [];
+                        $retCode = 0;
+                        @exec('php -l ' . escapeshellarg($phpFile) . ' 2>&1', $output, $retCode);
+                        if ($retCode !== 0) {
+                            $phpErrorCount++;
+                            $logMessages[] = '[ERROR] 语法错误: ' . $phpFile;
+                        }
+                    }
+                }
+            }
+            if ($phpErrorCount > 0) {
+                $logMessages[] = '[WARN] 发现 ' . $phpErrorCount . ' 个语法错误，已检查 ' . $phpCheckedCount . ' 个文件';
+            } else {
+                $logMessages[] = '[OK] 语法检查通过 (' . $phpCheckedCount . ' 个文件)';
+            }
+
+            $logMessages[] = '[INFO] 清理临时文件...';
+            onlineUpdateRemoveDir($tmpDir);
+            $logMessages[] = '[OK] 清理完成';
+
+            $logMessages[] = '[SUCCESS] 更新完成！';
+            $logMessages[] = '[INFO] 新版本: ' . $latestVersion;
+            $logMessages[] = '[INFO] 更新时间: ' . date('Y-m-d H:i:s');
+            if (!empty($backupPath)) {
+                $logMessages[] = '[INFO] 备份文件: ' . basename($backupPath);
+            }
+            $logMessages[] = '[INFO] 请刷新页面查看更新效果';
+
+            echo json_encode([
+                'code' => 200,
+                'success' => true,
+                'logs' => $logMessages,
+                'new_version' => $latestVersion,
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+
+        } catch (Exception $e) {
+            $logMessages[] = '[ERROR] 更新失败: ' . $e->getMessage();
+            if (is_dir($tmpDir)) {
+                @onlineUpdateRemoveDir($tmpDir);
+            }
+            echo json_encode([
+                'code' => 500,
+                'success' => false,
+                'logs' => $logMessages,
+                'error' => $e->getMessage(),
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+
     if ($ajaxEarlyAction === 'ajax_parse_m3u8') {
         $url = trim($_POST['m3u8_url'] ?? '');
         $siteId = (int)($_POST['site_id'] ?? 0);
@@ -1187,305 +1487,6 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
                 $typeName = $type === 'content' ? '正片' : ($type === 'ad' ? '广告' : '未知');
                 echo json_encode(['code' => 200, 'domain' => $domain, 'type' => $type, 'type_name' => $typeName], JSON_UNESCAPED_UNICODE);
                 exit;
-            }
-
-            if ($ajaxEarlyAction === 'ajax_online_update_check') {
-                @set_time_limit(60);
-                $updateConfigFile = __DIR__ . '/config/update.php';
-                $updateConfig = [];
-                if (file_exists($updateConfigFile)) {
-                    $updateConfig = require $updateConfigFile;
-                }
-                $githubRepo = $updateConfig['github_repo'] ?? 'ssmhdssmhd/MX-jx';
-                $githubBranch = $updateConfig['github_branch'] ?? 'main';
-                $useMirror = $updateConfig['use_mirror'] ?? 'auto';
-                $mirrorUrl = $updateConfig['mirror_url'] ?? 'https://ghproxy.com';
-
-                $currentVersion = 'unknown';
-                $versionFile = __DIR__ . '/VERSION';
-                if (file_exists($versionFile)) {
-                    $currentVersion = trim(file_get_contents($versionFile));
-                }
-
-                $apiUrl = 'https://api.github.com/repos/' . $githubRepo . '/commits/' . $githubBranch;
-                $ch = curl_init();
-                curl_setopt($ch, CURLOPT_URL, $apiUrl);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-                curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
-                $response = curl_exec($ch);
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                $curlError = curl_error($ch);
-                curl_close($ch);
-
-                $latestVersion = '';
-                $latestDate = '';
-                $latestSha = '';
-                $needsUpdate = false;
-
-                if ($httpCode === 200 && $response) {
-                    $data = json_decode($response, true);
-                    if (!empty($data['sha'])) {
-                        $latestSha = substr($data['sha'], 0, 7);
-                        $latestVersion = $githubBranch . '-' . $latestSha;
-                        if (!empty($data['commit']['committer']['date'])) {
-                            $latestDate = $data['commit']['committer']['date'];
-                        }
-                        if ($currentVersion !== $latestVersion && $currentVersion !== 'unknown') {
-                            $needsUpdate = true;
-                        }
-                    }
-                }
-
-                echo json_encode([
-                    'code' => 200,
-                    'current_version' => $currentVersion,
-                    'latest_version' => $latestVersion,
-                    'latest_date' => $latestDate,
-                    'latest_sha' => $latestSha,
-                    'needs_update' => $needsUpdate,
-                    'github_repo' => $githubRepo,
-                    'github_branch' => $githubBranch,
-                    'http_code' => $httpCode,
-                    'curl_error' => $curlError,
-                ], JSON_UNESCAPED_UNICODE);
-                exit;
-            }
-
-            if ($ajaxEarlyAction === 'ajax_online_update_do') {
-                @set_time_limit(0);
-                @ignore_user_abort(true);
-                @ini_set('memory_limit', '256M');
-                @ini_set('max_execution_time', '0');
-
-                $force = !empty($_POST['force']) && $_POST['force'] === '1';
-                $updateConfigFile = __DIR__ . '/config/update.php';
-                $updateConfig = [];
-                if (file_exists($updateConfigFile)) {
-                    $updateConfig = require $updateConfigFile;
-                }
-                $githubRepo = $updateConfig['github_repo'] ?? 'ssmhdssmhd/MX-jx';
-                $githubBranch = $updateConfig['github_branch'] ?? 'main';
-                $useMirror = $updateConfig['use_mirror'] ?? 'auto';
-                $mirrorUrl = rtrim($updateConfig['mirror_url'] ?? 'https://ghproxy.com', '/');
-
-                $currentVersion = 'unknown';
-                $versionFile = __DIR__ . '/VERSION';
-                if (file_exists($versionFile)) {
-                    $currentVersion = trim(file_get_contents($versionFile));
-                }
-
-                $logMessages = [];
-                $logMessages[] = '[INFO] 开始在线更新...';
-                $logMessages[] = '[INFO] 当前版本: ' . $currentVersion;
-                $logMessages[] = '[INFO] 仓库: ' . $githubRepo . ' 分支: ' . $githubBranch;
-
-                $excludeFiles = [
-                    'config/', 'data/', '*.db', '*.sqlite', 'VERSION',
-                    'update_backups/', 'update_tmp/', 'update.sh', '.git/',
-                    'cache/', 'update_backups',
-                ];
-
-                $tmpDir = __DIR__ . '/update_tmp';
-                $backupDir = __DIR__ . '/update_backups';
-                if (!is_dir($backupDir)) {
-                    @mkdir($backupDir, 0755, true);
-                }
-
-                $zipFile = $tmpDir . '/moxi_latest.zip';
-                $extractedDir = '';
-
-                try {
-                    if (is_dir($tmpDir)) {
-                        onlineUpdateRemoveDir($tmpDir);
-                    }
-                    @mkdir($tmpDir, 0755, true);
-
-                    $logMessages[] = '[INFO] 检测网络环境...';
-                    $githubBase = 'https://github.com';
-                    if ($useMirror === 'yes') {
-                        $githubBase = $mirrorUrl . '/https://github.com';
-                        $logMessages[] = '[INFO] 已配置使用镜像: ' . $mirrorUrl;
-                    } elseif ($useMirror === 'auto') {
-                        $logMessages[] = '[INFO] 测试 GitHub 直连速度...';
-                        $ch = curl_init('https://github.com');
-                        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-                        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-                        curl_setopt($ch, CURLOPT_NOBODY, true);
-                        $startTime = microtime(true);
-                        @curl_exec($ch);
-                        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                        $elapsed = round((microtime(true) - $startTime) * 1000);
-                        curl_close($ch);
-                        if ($httpCode > 0 && $elapsed < 3000) {
-                            $logMessages[] = '[INFO] 直连正常 (' . $elapsed . 'ms)';
-                        } else {
-                            $githubBase = $mirrorUrl . '/https://github.com';
-                            $logMessages[] = '[WARN] 直连较慢或失败，自动切换镜像 (' . $elapsed . 'ms)';
-                        }
-                    } else {
-                        $logMessages[] = '[INFO] 不使用镜像';
-                    }
-
-                    $logMessages[] = '[INFO] 下载最新代码...';
-                    $zipUrl = $githubBase . '/' . $githubRepo . '/archive/refs/heads/' . $githubBranch . '.zip';
-                    $logMessages[] = '[INFO] 下载地址: ' . $zipUrl;
-
-                    $ch = curl_init();
-                    curl_setopt($ch, CURLOPT_URL, $zipUrl);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 300);
-                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
-                    curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
-                    curl_setopt($ch, CURLOPT_FILE, fopen($zipFile, 'w'));
-                    $downloadSuccess = curl_exec($ch);
-                    $downloadHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                    $downloadError = curl_error($ch);
-                    curl_close($ch);
-
-                    if (!$downloadSuccess || $downloadHttpCode !== 200 || !file_exists($zipFile) || filesize($zipFile) < 1024) {
-                        throw new Exception('下载失败: HTTP ' . $downloadHttpCode . ' - ' . $downloadError);
-                    }
-
-                    $zipSize = round(filesize($zipFile) / 1024 / 1024, 2);
-                    $logMessages[] = '[OK] 下载完成: ' . $zipSize . ' MB';
-
-                    $logMessages[] = '[INFO] 解压代码...';
-                    $zip = new ZipArchive();
-                    if ($zip->open($zipFile) !== true) {
-                        throw new Exception('解压失败: 无法打开 ZIP 文件');
-                    }
-                    $zip->extractTo($tmpDir);
-                    $zip->close();
-
-                    $dirs = glob($tmpDir . '/*', GLOB_ONLYDIR);
-                    if (empty($dirs)) {
-                        throw new Exception('解压失败: 未找到解压目录');
-                    }
-                    $extractedDir = $dirs[0];
-                    $logMessages[] = '[OK] 解压完成';
-
-                    $logMessages[] = '[INFO] 备份当前版本...';
-                    $backupName = 'backup_' . date('Ymd_His');
-                    $backupPath = $backupDir . '/' . $backupName;
-
-                    if (class_exists('ZipArchive') && function_exists('gzcompress')) {
-                        $backupZip = $backupPath . '.tar.gz';
-                        $backupSuccess = onlineUpdateBackupZip(__DIR__, $backupPath . '.zip', $excludeFiles);
-                        if ($backupSuccess) {
-                            $logMessages[] = '[OK] 备份完成: ' . basename($backupPath . '.zip');
-                        } else {
-                            $logMessages[] = '[WARN] ZIP 备份失败，尝试目录复制...';
-                            $backupSuccess = onlineUpdateBackupCopy(__DIR__, $backupPath, $excludeFiles);
-                            if ($backupSuccess) {
-                                $logMessages[] = '[OK] 备份完成 (目录方式): ' . $backupName;
-                            } else {
-                                $logMessages[] = '[WARN] 备份失败，继续更新...';
-                            }
-                        }
-                    } else {
-                        $backupSuccess = onlineUpdateBackupCopy(__DIR__, $backupPath, $excludeFiles);
-                        if ($backupSuccess) {
-                            $logMessages[] = '[OK] 备份完成 (目录方式): ' . $backupName;
-                        } else {
-                            $logMessages[] = '[WARN] 备份失败，继续更新...';
-                        }
-                    }
-
-                    $logMessages[] = '[INFO] 执行更新...';
-                    $updatedCount = 0;
-                    $skippedCount = 0;
-                    $updateResult = onlineUpdateCopyFiles($extractedDir, __DIR__, $excludeFiles, $updatedCount, $skippedCount);
-                    if (!$updateResult) {
-                        throw new Exception('更新文件时发生错误');
-                    }
-                    $logMessages[] = '[OK] 文件更新完成: 更新 ' . $updatedCount . ' 个，跳过 ' . $skippedCount . ' 个';
-
-                    $latestVersion = $githubBranch . '-' . substr(md5_file($zipFile), 0, 7);
-                    $apiUrl = 'https://api.github.com/repos/' . $githubRepo . '/commits/' . $githubBranch;
-                    $ch = curl_init();
-                    curl_setopt($ch, CURLOPT_URL, $apiUrl);
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-                    curl_setopt($ch, CURLOPT_USERAGENT, 'MX-JX-Online-Updater');
-                    $apiResp = @curl_exec($ch);
-                    curl_close($ch);
-                    if ($apiResp) {
-                        $apiData = json_decode($apiResp, true);
-                        if (!empty($apiData['sha'])) {
-                            $latestVersion = $githubBranch . '-' . substr($apiData['sha'], 0, 7);
-                        }
-                    }
-
-                    file_put_contents($versionFile, $latestVersion . "\n");
-                    file_put_contents($versionFile, "更新时间: " . date('Y-m-d H:i:s') . "\n", FILE_APPEND);
-                    $logMessages[] = '[OK] 版本号已更新: ' . $latestVersion;
-
-                    $logMessages[] = '[INFO] 检查 PHP 语法...';
-                    $phpErrorCount = 0;
-                    $phpCheckedCount = 0;
-                    if (function_exists('php_check_syntax') || function_exists('exec')) {
-                        $phpFiles = onlineUpdateScanPhpFiles(__DIR__);
-                        foreach ($phpFiles as $phpFile) {
-                            $phpCheckedCount++;
-                            if (function_exists('php_check_syntax')) {
-                                if (!php_check_syntax($phpFile)) {
-                                    $phpErrorCount++;
-                                    $logMessages[] = '[ERROR] 语法错误: ' . $phpFile;
-                                }
-                            } elseif (function_exists('exec')) {
-                                $output = [];
-                                $retCode = 0;
-                                @exec('php -l ' . escapeshellarg($phpFile) . ' 2>&1', $output, $retCode);
-                                if ($retCode !== 0) {
-                                    $phpErrorCount++;
-                                    $logMessages[] = '[ERROR] 语法错误: ' . $phpFile;
-                                }
-                            }
-                        }
-                    }
-                    if ($phpErrorCount > 0) {
-                        $logMessages[] = '[WARN] 发现 ' . $phpErrorCount . ' 个语法错误，已检查 ' . $phpCheckedCount . ' 个文件';
-                    } else {
-                        $logMessages[] = '[OK] 语法检查通过 (' . $phpCheckedCount . ' 个文件)';
-                    }
-
-                    $logMessages[] = '[INFO] 清理临时文件...';
-                    onlineUpdateRemoveDir($tmpDir);
-                    $logMessages[] = '[OK] 清理完成';
-
-                    $logMessages[] = '[SUCCESS] 更新完成！';
-                    $logMessages[] = '[INFO] 新版本: ' . $latestVersion;
-                    $logMessages[] = '[INFO] 更新时间: ' . date('Y-m-d H:i:s');
-                    if (!empty($backupPath)) {
-                        $logMessages[] = '[INFO] 备份文件: ' . basename($backupPath);
-                    }
-                    $logMessages[] = '[INFO] 请刷新页面查看更新效果';
-
-                    echo json_encode([
-                        'code' => 200,
-                        'success' => true,
-                        'logs' => $logMessages,
-                        'new_version' => $latestVersion,
-                    ], JSON_UNESCAPED_UNICODE);
-                    exit;
-
-                } catch (Exception $e) {
-                    $logMessages[] = '[ERROR] 更新失败: ' . $e->getMessage();
-                    if (is_dir($tmpDir)) {
-                        @onlineUpdateRemoveDir($tmpDir);
-                    }
-                    echo json_encode([
-                        'code' => 500,
-                        'success' => false,
-                        'logs' => $logMessages,
-                        'error' => $e->getMessage(),
-                    ], JSON_UNESCAPED_UNICODE);
-                    exit;
-                }
             }
         }
     }
