@@ -1,0 +1,45 @@
+# 沫兮万能解析 - URL 重写规则
+# 支持直接访问 域名/?url= 而无需加 index.php
+
+Options -Indexes +FollowSymLinks
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header set Access-Control-Allow-Headers "*"
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 hour"
+    ExpiresByType application/javascript "access plus 1 hour"
+    ExpiresByType image/jpeg "access plus 1 day"
+    ExpiresByType image/png "access plus 1 day"
+    ExpiresByType image/gif "access plus 1 day"
+    ExpiresByType image/svg+xml "access plus 1 day"
+</IfModule>
+
+<FilesMatch "\.(db|sqlite|sqlite3)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+<FilesMatch "\.(log|tmp|lock)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+<DirectoryMatch "^.*/(cache|data|logs)/">
+    Order Allow,Deny
+    Deny from all
+</DirectoryMatch>

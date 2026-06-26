@@ -34,7 +34,7 @@
  *
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version v5.1.0
+ * @version v5.1.1
  */
 
 error_reporting(0);
@@ -73,7 +73,7 @@ if (empty($url)) {
         'code' => 400,
         'msg'  => '缺少 url 参数',
         'usage' => '?url=<M3U8地址>',
-        'version' => 'v5.1.0',
+        'version' => 'v5.1.1',
     ], $callback);
     exit;
 }
@@ -100,9 +100,16 @@ $cacheTtl = isset($noadCfg['cache_ttl_seconds']) ? (int)$noadCfg['cache_ttl_seco
 $autoSync = isset($noadCfg['md5_auto_sync_signatures']) ? (bool)$noadCfg['md5_auto_sync_signatures'] : true;
 
 $currentProto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+if (isset($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+    $currentProto = $_SERVER['HTTP_X_FORWARDED_PROTO'];
+}
 $currentHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
-$currentPath = dirname($_SERVER['PHP_SELF'] ?? '/noad_md5.php');
-$cleanUrl = $currentProto . '://' . $currentHost . rtrim($currentPath, '/') . '/cache/noad_md5/' . $urlHash . '.m3u8';
+$scriptName = $_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '/noad_md5.php';
+$currentPath = rtrim(dirname($scriptName), '/');
+if ($currentPath === '.' || $currentPath === '\\') {
+    $currentPath = '';
+}
+$cleanUrl = $currentProto . '://' . $currentHost . $currentPath . '/cache/noad_md5/' . $urlHash . '.m3u8';
 
 if (!$force && file_exists($cacheFile) && file_exists($cacheM3u8) && (time() - filemtime($cacheFile) < $cacheTtl)) {
     $cacheData = json_decode(file_get_contents($cacheFile), true);
@@ -258,7 +265,7 @@ try {
     $result = [
         'code' => 200,
         'msg'  => 'ok',
-        'version' => 'v5.1.0',
+        'version' => 'v5.1.1',
         'data' => [
             'original_url'       => $url,
             'final_url'          => $finalUrl,

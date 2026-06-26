@@ -3,7 +3,7 @@
  * SQLite 轻量级数据库抽象层 - Noad 去广告系统
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version v5.1.0
+ * @version v5.1.1
  *
  * 特性:
  *  - 零配置部署，PHP 8.0 ~ 8.5 原生 PDO 支持

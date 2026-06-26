@@ -3,13 +3,13 @@
  * PHP 智能线路切换 - 并发版 + Noad 去广告解析
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version v5.1.0
+ * @version v5.1.1
  *
  * 使用方法:
- *   /index.php?url=https://v.qq.com/x/cover/mzc00200mp8vo9l/r00421m6n7k.html
- *   /index.php?url=...&type=movie   (指定7种资源类型之一)
- *   /index.php?mode=noad&url=...    (强制使用 Noad 去广告版)
- *   /index.php?mode=legacy&url=...  (强制使用旧版并发解析)
+ *   /?url=https://v.qq.com/x/cover/mzc00200mp8vo9l/r00421m6n7k.html
+ *   /?url=...&type=movie   (指定7种资源类型之一)
+ *   /?url=...&mode=noad    (强制使用 Noad 去广告版)
+ *   /?url=...&mode=legacy  (强制使用旧版并发解析)
  */
 
 // 错误报告设置（生产环境建议仅记录致命错误，关闭显示）
@@ -40,11 +40,11 @@ if (empty($url)) {
     header('Access-Control-Allow-Origin: *');
     echo json_encode(array(
         'code' => 400,
-        'msg'  => 'URL 参数不能为空，用法：/index.php?url=视频播放地址',
-        'usage' => '/index.php?url=https://v.qq.com/...&type=movie|tv|variety|anime|document|sports|short',
+        'msg'  => 'URL 参数不能为空，用法：/?url=视频播放地址',
+        'usage' => '/?url=https://v.qq.com/...&type=movie|tv|variety|anime|document|sports|short',
         'developer' => 'MX-射手沫蝴蝶',
         'contact' => 'QQ: 2094332348',
-        'version' => 'v5.1.0',
+        'version' => 'v5.1.1',
         'timestamp' => time(),
     ), JSON_UNESCAPED_UNICODE);
     exit;
