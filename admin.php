@@ -1252,6 +1252,10 @@ elseif ($action === 'save_switch') {
         'noad_enabled'      => isset($_POST['noad_enabled']),
         'sqlite_enabled'    => isset($_POST['sqlite_enabled']),
         'ad_remove_enabled' => isset($_POST['ad_remove_enabled']),
+        'video_parse_enabled' => isset($_POST['video_parse_enabled']),
+        'ad_remove_url_enabled' => isset($_POST['ad_remove_url_enabled']),
+        'parse_integrate_noad' => isset($_POST['parse_integrate_noad']),
+        'debug_mode_enabled' => isset($_POST['debug_mode_enabled']),
     ];
     $content = "<?php\nreturn array(\n";
     foreach ($newSw as $k => $v) {
@@ -1994,6 +1998,12 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="noad_enabled" <?php if (!empty($switchConfig['noad_enabled'])) echo 'checked'; ?>> 启用 NoAd 去广告系统</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="sqlite_enabled" <?php if (!empty($switchConfig['sqlite_enabled'])) echo 'checked'; ?>> 启用 SQLite 数据库（指纹库持久化）</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_enabled" <?php if (!empty($switchConfig['ad_remove_enabled'])) echo 'checked'; ?>> 启用去插播广告（/q?url= 接口）</label>
+                    <hr style="border:none;border-top:1px dashed #ddd;margin:15px 0">
+                    <h3 style="margin:10px 0;font-size:16px">🎬 功能开关</h3>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="video_parse_enabled" <?php if (!empty($switchConfig['video_parse_enabled'])) echo 'checked'; ?>> 启用视频解析接口（/?url=）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_url_enabled" <?php if (!empty($switchConfig['ad_remove_url_enabled'])) echo 'checked'; ?>> 启用去广告链接接口（/q.php?url=）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="parse_integrate_noad" <?php if (!empty($switchConfig['parse_integrate_noad'])) echo 'checked'; ?>> 解析结果集成去广告链接（在解析结果中返回去广告后的链接数组）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="debug_mode_enabled" <?php if (!empty($switchConfig['debug_mode_enabled'])) echo 'checked'; ?>> 调试模式（返回详细调试信息）</label>
                     <div style="margin-top:12px">
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button>
                     </div>
@@ -3883,6 +3893,12 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="noad_enabled" <?php if (!empty($switchConfig['noad_enabled'])) echo 'checked'; ?>> 启用 NoAd 去广告系统</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="sqlite_enabled" <?php if (!empty($switchConfig['sqlite_enabled'])) echo 'checked'; ?>> 启用 SQLite 数据库（指纹库持久化）</label>
                     <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_enabled" <?php if (!empty($switchConfig['ad_remove_enabled'])) echo 'checked'; ?>> 启用去插播广告（/q?url= 接口）</label>
+                    <hr style="border:none;border-top:1px dashed #ddd;margin:15px 0">
+                    <h3 style="margin:10px 0;font-size:16px">🎬 功能开关</h3>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="video_parse_enabled" <?php if (!empty($switchConfig['video_parse_enabled'])) echo 'checked'; ?>> 启用视频解析接口（/?url=）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_url_enabled" <?php if (!empty($switchConfig['ad_remove_url_enabled'])) echo 'checked'; ?>> 启用去广告链接接口（/q.php?url=）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="parse_integrate_noad" <?php if (!empty($switchConfig['parse_integrate_noad'])) echo 'checked'; ?>> 解析结果集成去广告链接（在解析结果中返回去广告后的链接数组）</label>
+                    <label style="display:block;margin:10px 0"><input type="checkbox" name="debug_mode_enabled" <?php if (!empty($switchConfig['debug_mode_enabled'])) echo 'checked'; ?>> 调试模式（返回详细调试信息）</label>
                     <div style="margin-top:12px">
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button>
                     </div>
@@ -4240,6 +4256,17 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_zjk_apis" <?php if (!empty($switchConfig['enable_zjk_apis'])) echo 'checked'; ?>> 启用 ZJK.txt 自定义接口</label>
                 <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_m3u8_direct" <?php if (!empty($switchConfig['enable_m3u8_direct'])) echo 'checked'; ?>> M3U8 直链快速通道</label>
                 <label style="display:block;margin:10px 0"><input type="checkbox" name="enable_unified_display" <?php if (!empty($switchConfig['enable_unified_display'])) echo 'checked'; ?>> 统一响应格式</label>
+                <hr style="border:none;border-top:1px dashed #ddd;margin:15px 0">
+                <h3 style="margin:10px 0;font-size:16px">🎯 去广告系统</h3>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="noad_enabled" <?php if (!empty($switchConfig['noad_enabled'])) echo 'checked'; ?>> 启用 NoAd 去广告系统</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="sqlite_enabled" <?php if (!empty($switchConfig['sqlite_enabled'])) echo 'checked'; ?>> 启用 SQLite 数据库（指纹库持久化）</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_enabled" <?php if (!empty($switchConfig['ad_remove_enabled'])) echo 'checked'; ?>> 启用去插播广告（/q?url= 接口）</label>
+                <hr style="border:none;border-top:1px dashed #ddd;margin:15px 0">
+                <h3 style="margin:10px 0;font-size:16px">🎬 功能开关</h3>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="video_parse_enabled" <?php if (!empty($switchConfig['video_parse_enabled'])) echo 'checked'; ?>> 启用视频解析接口（/?url=）</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="ad_remove_url_enabled" <?php if (!empty($switchConfig['ad_remove_url_enabled'])) echo 'checked'; ?>> 启用去广告链接接口（/q.php?url=）</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="parse_integrate_noad" <?php if (!empty($switchConfig['parse_integrate_noad'])) echo 'checked'; ?>> 解析结果集成去广告链接（在解析结果中返回去广告后的链接数组）</label>
+                <label style="display:block;margin:10px 0"><input type="checkbox" name="debug_mode_enabled" <?php if (!empty($switchConfig['debug_mode_enabled'])) echo 'checked'; ?>> 调试模式（返回详细调试信息）</label>
                 <div style="margin-top:12px">
                     <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">💾 保存</button>
                 </div>

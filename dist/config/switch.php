@@ -63,4 +63,29 @@ return [
      * 可通过 /q?url= 接口调用去广告功能
      */
     'ad_remove_enabled' => true,
+
+    /**
+     * 视频解析接口开关
+     * 开启后，/?url= 视频解析接口可用
+     */
+    'video_parse_enabled' => true,
+
+    /**
+     * 去广告链接接口开关
+     * 开启后，/q.php?url= 去广告链接接口可用
+     */
+    'ad_remove_url_enabled' => true,
+
+    /**
+     * 解析结果集成去广告开关
+     * 开启后，当视频解析和去广告功能都启用时，
+     * 在 /?url= 的返回结果中自动集成去广告后的播放链接数组
+     */
+    'parse_integrate_noad' => true,
+
+    /**
+     * 调试模式开关
+     * 开启后返回详细的调试信息
+     */
+    'debug_mode_enabled' => false,
 ];

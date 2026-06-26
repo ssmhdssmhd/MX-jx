@@ -28,7 +28,7 @@
  *
  * @author MX-射手沫蝴蝶
  * @contact QQ: 2094332348
- * @version v5.1.2
+ * @version v5.2.0
  */
 
 error_reporting(0);
@@ -50,6 +50,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 $switchConfig = file_exists(__DIR__ . '/config/switch.php')
     ? require __DIR__ . '/config/switch.php'
     : [];
+
+if (empty($switchConfig['ad_remove_url_enabled'])) {
+    echo json_encode([
+        'code' => 503,
+        'msg'  => '去广告链接接口未启用，请在后台系统设置中开启',
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 if (empty($switchConfig['ad_remove_enabled'])) {
     echo json_encode([
@@ -86,7 +94,7 @@ if (empty($url)) {
         'code' => 400,
         'msg'  => '缺少 url 参数',
         'usage' => '/q?url=<M3U8地址>',
-        'version' => 'v5.1.2',
+        'version' => 'v5.2.0',
     ], $callback);
     exit;
 }
