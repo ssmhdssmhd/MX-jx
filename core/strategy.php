@@ -60,14 +60,30 @@ class Strategy {
         
         foreach ($this->apiConfig as $name => $config) {
             $apiCount++;
-            $parts = explode('|', $config);
-            if (count($parts) < 1 || empty($parts[0])) {
-                continue; // 跳过格式错误的配置
-            }
-            $url = str_replace('?url=', '?url={url}', $parts[0]);
             
-            // 如果是前N条API且开启总接口模式，使用全局超时时间
-            $timeout = isset($parts[1]) ? intval($parts[1]) : 5;
+            $url = '';
+            $timeout = 5;
+            $enabled = true;
+            
+            if (is_array($config)) {
+                $url = $config['url'] ?? '';
+                $timeout = isset($config['timeout']) ? intval($config['timeout']) : 5;
+                $enabled = isset($config['enabled']) ? (bool)$config['enabled'] : true;
+            } else {
+                $parts = explode('|', $config);
+                if (count($parts) < 1 || empty($parts[0])) {
+                    continue;
+                }
+                $url = $parts[0];
+                $timeout = isset($parts[1]) ? intval($parts[1]) : 5;
+            }
+            
+            if (!$enabled || empty($url)) {
+                continue;
+            }
+            
+            $url = str_replace('?url=', '?url={url}', $url);
+            
             $isGlobal = $this->switchConfig['enable_global_api'] && $apiCount <= $this->switchConfig['global_api_count'];
             if ($isGlobal) {
                 $timeout = intval($this->switchConfig['global_api_timeout']);

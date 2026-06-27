@@ -119,7 +119,15 @@ function writePhpFile($file, $content) {
 function buildPhpReturnArray($arr) {
     $content = "<?php\n/** 配置文件 */\n\nreturn array(\n";
     foreach ($arr as $k => $v) {
-        $content .= "    \"" . addslashes($k) . "\" => \"" . addslashes((string)$v) . "\",\n";
+        if (is_array($v)) {
+            $content .= "    \"" . addslashes($k) . "\" => " . var_export($v, true) . ",\n";
+        } elseif (is_bool($v)) {
+            $content .= "    \"" . addslashes($k) . "\" => " . ($v ? 'true' : 'false') . ",\n";
+        } elseif (is_numeric($v) && !is_string($v)) {
+            $content .= "    \"" . addslashes($k) . "\" => " . $v . ",\n";
+        } else {
+            $content .= "    \"" . addslashes($k) . "\" => \"" . addslashes((string)$v) . "\",\n";
+        }
     }
     $content .= ");\n";
     return $content;
@@ -251,7 +259,7 @@ $ajaxEarlyWhitelist = [
     'ajax_tools_list', 'ajax_tools_run', 'ajax_tools_reload', 'ajax_tools_combo',
     'ajax_ad_snippet_fetch',
     'ajax_online_update_check', 'ajax_online_update_do',
-    'ajax_batch_validate_apis',
+    'ajax_batch_validate_apis', 'ajax_test_single_api',
 ];
 if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
     header('Content-Type: application/json; charset=utf-8');
@@ -769,6 +777,115 @@ if (in_array($ajaxEarlyAction, $ajaxEarlyWhitelist, true)) {
             'warning_count' => $warningCount,
             'total_time_ms' => $totalTime,
             'results' => $results,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($ajaxEarlyAction === 'ajax_test_single_api') {
+        @set_time_limit(30);
+        @ignore_user_abort(true);
+
+        $apiUrl = trim($_POST['api_url'] ?? '');
+        $apiName = trim($_POST['api_name'] ?? '测试接口');
+        $timeout = (int)($_POST['timeout'] ?? 5);
+        $testVideoUrl = trim($_POST['test_url'] ?? 'https://www.iqiyi.com');
+
+        if ($apiUrl === '') {
+            echo json_encode(['code' => 400, 'msg' => '接口地址不能为空'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $startTime = microtime(true);
+        $ch = curl_init();
+        $fullUrl = rtrim($apiUrl, '/') . '/?url=' . urlencode($testVideoUrl);
+        if (strpos($apiUrl, '{url}') !== false) {
+            $fullUrl = str_replace('{url}', urlencode($testVideoUrl), $apiUrl);
+        }
+        curl_setopt($ch, CURLOPT_URL, $fullUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, max($timeout, 3));
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $elapsed = round((microtime(true) - $startTime) * 1000);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        $status = 'error';
+        $message = '';
+        $videoUrl = '';
+        $isGood = false;
+
+        if ($curlError) {
+            $status = 'error';
+            $message = '请求失败: ' . $curlError;
+        } elseif ($httpCode == 200 && $response) {
+            $data = json_decode($response, true);
+            if ($data) {
+                $videoUrl = '';
+                if (isset($data['url']) && is_string($data['url'])) {
+                    $videoUrl = $data['url'];
+                } elseif (isset($data['data']['url']) && is_string($data['data']['url'])) {
+                    $videoUrl = $data['data']['url'];
+                } elseif (isset($data['VideoInfo']['playurl']) && is_string($data['VideoInfo']['playurl'])) {
+                    $videoUrl = $data['VideoInfo']['playurl'];
+                } elseif (isset($data['playurl']) && is_string($data['playurl'])) {
+                    $videoUrl = $data['playurl'];
+                } elseif (isset($data['m3u8']) && is_string($data['m3u8'])) {
+                    $videoUrl = $data['m3u8'];
+                }
+
+                $codeOk = isset($data['code']) && ($data['code'] == 200 || $data['code'] == 1 || $data['code'] === true);
+                if ($videoUrl !== '') {
+                    $status = 'success';
+                    $message = '解析成功 (HTTP 200, ' . $elapsed . 'ms)';
+                    $isGood = true;
+                } elseif ($codeOk) {
+                    $status = 'warning';
+                    $message = '响应成功但未提取到视频地址 (HTTP 200, ' . $elapsed . 'ms)';
+                } else {
+                    $status = 'warning';
+                    $message = '响应正常但解析失败 (HTTP 200, ' . $elapsed . 'ms)';
+                }
+            } else {
+                if (preg_match('/(https?:\/\/[^\s"\'<>]+\.(m3u8|mp4|m3u)[^\s"\'<>]*)/i', $response, $matches)) {
+                    $videoUrl = $matches[1];
+                    $status = 'success';
+                    $message = '解析成功 (从响应中提取, ' . $elapsed . 'ms)';
+                    $isGood = true;
+                } else {
+                    $status = 'warning';
+                    $message = '响应正常但非JSON格式 (HTTP 200, ' . $elapsed . 'ms)';
+                }
+            }
+        } elseif ($httpCode >= 300 && $httpCode < 400) {
+            $status = 'warning';
+            $message = '重定向中 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+        } elseif ($httpCode >= 400 && $httpCode < 500) {
+            $status = 'error';
+            $message = '请求被拒绝 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+        } else {
+            $status = 'error';
+            $message = '服务器错误 (HTTP ' . $httpCode . ', ' . $elapsed . 'ms)';
+        }
+
+        echo json_encode([
+            'code' => 200,
+            'name' => $apiName,
+            'url' => $apiUrl,
+            'test_url' => $testVideoUrl,
+            'status' => $status,
+            'message' => $message,
+            'is_good' => $isGood,
+            'http_code' => $httpCode,
+            'elapsed_ms' => $elapsed,
+            'video_url' => $videoUrl,
+            'response_preview' => mb_substr($response, 0, 500),
         ], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -1862,15 +1979,23 @@ if ($action === 'save_api') {
     $names = $_POST['api_name'] ?? [];
     $urls = $_POST['api_url'] ?? [];
     $timeouts = $_POST['api_timeout'] ?? [];
+    $enableds = $_POST['api_enabled'] ?? [];
     for ($i = 0; $i < count($names); $i++) {
         $n = trim($names[$i] ?? '');
         $u = trim($urls[$i] ?? '');
         $t = (int)($timeouts[$i] ?? 5);
-        if ($n !== '' && $u !== '' && $t > 0) $newApis[$n] = $u . '|' . $t;
+        $e = !empty($enableds[$i]) || (isset($_POST['api_enabled_' . $i]) && $_POST['api_enabled_' . $i] === '1');
+        if ($n !== '' && $u !== '' && $t > 0) {
+            $newApis[$n] = [
+                'url' => $u,
+                'timeout' => $t,
+                'enabled' => $e,
+            ];
+        }
     }
     writePhpFile(__DIR__ . '/config/api.php', buildPhpReturnArray($newApis));
     $apiConfig = require __DIR__ . '/config/api.php';
-    $msg = 'API 配置已保存';
+    $msg = 'API 配置已保存，共 ' . count($newApis) . ' 条';
 }
 elseif ($action === 'save_platform') {
     $newPlats = [];
@@ -2170,8 +2295,22 @@ if (file_exists($logFile)) {
 
 $parsedApis = [];
 foreach ($apiConfig as $name => $val) {
-    $parts = explode('|', $val);
-    $parsedApis[] = ['name' => $name, 'url' => rtrim($parts[0], '|'), 'timeout' => (int)($parts[1] ?? 5)];
+    if (is_array($val)) {
+        $parsedApis[] = [
+            'name' => $name,
+            'url' => $val['url'] ?? '',
+            'timeout' => (int)($val['timeout'] ?? 5),
+            'enabled' => isset($val['enabled']) ? (bool)$val['enabled'] : true,
+        ];
+    } else {
+        $parts = explode('|', $val);
+        $parsedApis[] = [
+            'name' => $name,
+            'url' => rtrim($parts[0], '|'),
+            'timeout' => (int)($parts[1] ?? 5),
+            'enabled' => true,
+        ];
+    }
 }
 
 // ========= 接口测试数据处理 =========
@@ -2183,12 +2322,26 @@ if ($page === 'test' && !empty($_GET['test_url']) && $curlOk) {
     $handles = [];
     foreach ($apiConfig as $name => $config) {
         $apiCount++;
-        $parts = explode('|', $config);
-        $to = (int)($parts[1] ?? 5);
+        $url = '';
+        $to = 5;
+        $enabled = true;
+        
+        if (is_array($config)) {
+            $url = $config['url'] ?? '';
+            $to = (int)($config['timeout'] ?? 5);
+            $enabled = isset($config['enabled']) ? (bool)$config['enabled'] : true;
+        } else {
+            $parts = explode('|', $config);
+            $url = $parts[0] ?? '';
+            $to = (int)($parts[1] ?? 5);
+        }
+        
+        if (!$enabled || empty($url)) continue;
+        
         if (!empty($switchConfig['enable_global_api']) && $apiCount <= $switchConfig['global_api_count']) {
             $to = $switchConfig['global_api_timeout'];
         }
-        $reqUrl = str_replace('{url}', urlencode($testUrl), $parts[0]);
+        $reqUrl = str_replace('{url}', urlencode($testUrl), $url);
         $ch = curl_init($reqUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $to);
@@ -2624,36 +2777,43 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 
         <div class="sub-tab-panel active" id="subtab-pc_api">
             <div class="panel">
-                <form method="post">
+                <form method="post" id="apiForm">
                     <input type="hidden" name="action" value="save_api">
                     <table class="data-table" id="apiTable_new">
-                        <thead><tr><th>序号</th><th>接口名称</th><th>接口地址</th><th style="width:120px">超时(秒)</th><th style="width:100px">操作</th></tr></thead>
+                        <thead><tr><th style="width:60px">启用</th><th style="width:60px">序号</th><th>接口名称</th><th>接口地址</th><th style="width:120px">超时(秒)</th><th style="width:180px">操作</th></tr></thead>
                         <tbody id="apiTbody_new">
                         <?php foreach ($parsedApis as $idx => $api): ?>
                         <tr>
+                            <td style="text-align:center"><input type="checkbox" name="api_enabled[]" value="1" <?php if (!empty($api['enabled'])) echo 'checked'; ?> style="width:18px;height:18px;cursor:pointer"></td>
                             <td style="color:#999;text-align:center"><?php echo $idx + 1; ?></td>
                             <td><input type="text" name="api_name[]" value="<?php echo htmlspecialchars($api['name']); ?>" style="width:100%"></td>
                             <td><input type="text" name="api_url[]" value="<?php echo htmlspecialchars($api['url']); ?>" style="width:100%"></td>
                             <td><input type="number" name="api_timeout[]" value="<?php echo (int)$api['timeout']; ?>" min="1" max="120" style="width:100%"></td>
-                            <td class="center"><button type="button" class="btn-danger-sm" onclick="this.closest('tr').remove()">删除</button></td>
+                            <td class="center" style="display:flex;gap:6px;justify-content:center">
+                                <button type="button" class="btn-secondary-sm" onclick="testSingleApi(this)" style="padding:4px 10px;font-size:12px">🧪 测试</button>
+                                <button type="button" class="btn-danger-sm" onclick="this.closest('tr').remove()" style="padding:4px 10px;font-size:12px">删除</button>
+                            </td>
                         </tr>
                         <?php endforeach; ?>
                         <?php if (count($parsedApis) === 0): ?>
-                        <tr><td colspan="5" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>
+                        <tr><td colspan="6" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>
                         <?php endif; ?>
                         </tbody>
                     </table>
                     <div style="margin-top:12px">
-                        <button type="button" class="btn-secondary-sm" onclick="
-                            var tb = document.getElementById('apiTbody_new');
-                            var tr = document.createElement('tr');
-                            tr.innerHTML = '<td style=\'color:#999;text-align:center\'>+</td><td><input type=\'text\' name=\'api_name[]\' placeholder=\'接口名称\' style=\'width:100%\'></td><td><input type=\'text\' name=\'api_url[]\' placeholder=\'https://jx.example.com/?url=\' style=\'width:100%\'></td><td><input type=\'number\' name=\'api_timeout[]\' value=\'5\' min=\'1\' max=\'120\' style=\'width:100%\'></td><td><button type=\'button\' class=\'btn-danger-sm\' onclick=\'this.closest(&quot;tr&quot;).remove()\'>删除</button></td>';
-                            tb.appendChild(tr);
-                        " style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
+                        <button type="button" class="btn-secondary-sm" onclick="addApiRow()" style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存全部</button>
-                        <button type="button" id="btnBatchValidate" class="btn-primary-sm" onclick="batchValidateApis()" style="font-size:14px;padding:8px 18px;background:linear-gradient(135deg,#11998e,#38ef7d);border:none;margin-left:8px">🔍 批量验证接口</button>
+                        <button type="button" id="btnBatchValidate" class="btn-primary-sm" onclick="batchValidateApis()" style="font-size:14px;padding:8px 18px;background:linear-gradient(135deg,#11998e,#38ef7d);border:none;margin-left:8px">🔍 批量验证</button>
                     </div>
                 </form>
+            </div>
+
+            <div id="singleTestResult" class="panel" style="margin-top:16px;display:none">
+                <h3>🧪 单接口测试结果</h3>
+                <div id="singleTestContent" style="margin-top:12px"></div>
+                <div style="margin-top:12px;text-align:center">
+                    <button type="button" class="btn-secondary-sm" onclick="closeSingleTest()" style="font-size:13px;padding:6px 16px">收起</button>
+                </div>
             </div>
 
             <div id="validateResultPanel" class="panel" style="margin-top:16px;display:none">
@@ -2703,6 +2863,9 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
             <div class="panel">
                 <form method="post">
                     <input type="hidden" name="action" value="save_platform">
+                    <div style="margin-bottom:12px;padding:12px 16px;background:#f0f7ff;border-radius:10px;font-size:13px;color:#0066cc">
+                        <strong>💡 提示：</strong>五大官方平台（腾讯视频、爱奇艺、优酷、芒果TV、哔哩哔哩）已内置。可点击下方按钮快速恢复默认配置。
+                    </div>
                     <table class="data-table">
                         <thead><tr><th>平台名称</th><th>匹配规则</th><th style="width:100px">操作</th></tr></thead>
                         <tbody id="platTbody_new">
@@ -2719,12 +2882,8 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         </tbody>
                     </table>
                     <div style="margin-top:12px">
-                        <button type="button" class="btn-secondary-sm" onclick="
-                            var tb = document.getElementById('platTbody_new');
-                            var tr = document.createElement('tr');
-                            tr.innerHTML = '<td><input type=\'text\' name=\'platform_name[]\' placeholder=\'平台名\' style=\'width:100%\'></td><td><input type=\'text\' name=\'platform_rule[]\' placeholder=\'域名关键字|接口名\' style=\'width:100%\'></td><td><button type=\'button\' class=\'btn-danger-sm\' onclick=\'this.closest(&quot;tr&quot;).remove()\'>删除</button></td>';
-                            tb.appendChild(tr);
-                        " style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
+                        <button type="button" class="btn-secondary-sm" onclick="addPlatformRow()" style="font-size:14px;padding:8px 18px">➕ 添加一行</button>
+                        <button type="button" class="btn-secondary-sm" onclick="resetDefaultPlatforms()" style="font-size:14px;padding:8px 18px;background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:white;margin-left:8px">🔄 恢复默认5大平台</button>
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">💾 保存全部</button>
                     </div>
                 </form>
@@ -2810,7 +2969,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <p style="color:#888">暂无日志。</p>
                 <?php else: ?>
                 <table class="data-table">
-                    <thead><tr><th>时间</th><th>IP</th><th>来源</th><th>类型</th><th>广告移除</th><th>耗时</th><th>缓存</th></tr></thead>
+                    <thead><tr><th>时间</th><th>IP</th><th>接口名称</th><th>类型</th><th>广告移除</th><th>耗时</th><th>缓存</th><th>状态</th></tr></thead>
                     <tbody>
                     <?php foreach ($recentLogs as $log): ?>
                     <tr>
@@ -2821,6 +2980,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         <td><?php echo (int)($log['ad_segments_removed'] ?? 0); ?></td>
                         <td><?php echo number_format((float)($log['response_time'] ?? 0), 1); ?>ms</td>
                         <td><?php echo !empty($log['is_from_cache']) ? '<span class="badge badge-green">命中</span>' : '<span class="badge badge-blue">未</span>'; ?></td>
+                        <td><?php echo (!isset($log['status']) || $log['status'] === 'ok') ? '<span class="badge badge-green">成功</span>' : '<span class="badge badge-red">失败</span>'; ?></td>
                     </tr>
                     <?php endforeach; ?>
                     </tbody>
@@ -2836,15 +2996,19 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <p style="color:#888">暂无解析记录。</p>
                 <?php else: ?>
                 <table class="data-table">
-                    <thead><tr><th>ID</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th></tr></thead>
+                    <thead><tr><th>ID</th><th>时间</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th><th>总时长</th><th>IP</th><th>操作</th></tr></thead>
                     <tbody>
                     <?php foreach ($parseLogs as $l): ?>
                     <tr>
                         <td><?php echo (int)$l['id']; ?></td>
+                        <td><?php echo date('Y-m-d H:i:s', (int)($l['parse_time'] ?? 0)); ?></td>
                         <td><?php echo htmlspecialchars($l['site_name'] ?? ''); ?></td>
                         <td><?php echo (int)($l['total_segments'] ?? 0); ?></td>
                         <td style="color:#dc3545"><?php echo (int)($l['ad_segments'] ?? 0); ?></td>
                         <td style="color:#28a745"><?php echo (int)($l['keep_segments'] ?? 0); ?></td>
+                        <td><?php echo gmdate('H:i:s', (int)($l['total_duration'] ?? 0)); ?></td>
+                        <td><?php echo htmlspecialchars($l['ip'] ?? ''); ?></td>
+                        <td><button type="button" class="btn-secondary-sm" onclick="showParseLogDetail(<?php echo (int)$l['id']; ?>)" style="padding:4px 10px;font-size:12px">详情</button></td>
                     </tr>
                     <?php endforeach; ?>
                     </tbody>
@@ -2859,33 +3023,37 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
 
         <div class="sub-tab-panel" id="subtab-pc_test" style="display:none">
             <div class="panel">
-                <form method="get">
-                    <input type="hidden" name="page" value="test">
-                    <div style="display:flex;gap:15px;align-items:center;flex-wrap:wrap">
-                        <label style="font-size:14px;color:#555">视频链接：</label>
-                        <input type="text" name="test_url" value="<?php echo isset($_GET['test_url']) ? htmlspecialchars($_GET['test_url']) : ''; ?>" style="flex:1;min-width:300px;padding:10px;border:1px solid #ddd;border-radius:6px" placeholder="https://v.qq.com/x/cover/example.html">
-                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px">开始测试</button>
+                <div style="display:flex;gap:15px;align-items:center;flex-wrap:wrap">
+                    <label style="font-size:14px;color:#555">视频链接：</label>
+                    <input type="text" id="pcTestUrl" value="" style="flex:1;min-width:300px;padding:10px;border:1px solid #ddd;border-radius:6px" placeholder="https://v.qq.com/x/cover/example.html">
+                    <button type="button" class="btn-primary-sm" onclick="runPcApiTest()" style="font-size:14px;padding:10px 24px">开始测试</button>
+                </div>
+            </div>
+            <div id="pcTestResult" style="display:none">
+                <div class="panel">
+                    <h3>📊 测试结果</h3>
+                    <div id="pcTestSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px"></div>
+                    <div id="pcTestDetails" style="max-height:500px;overflow-y:auto">
+                        <table class="data-table" style="font-size:13px">
+                            <thead><tr><th>状态</th><th>接口名称</th><th>HTTP</th><th>耗时</th><th>操作</th></tr></thead>
+                            <tbody id="pcTestTbody"></tbody>
+                        </table>
                     </div>
-                </form>
+                </div>
+                <div id="pcTestVideoPanel" class="panel" style="display:none">
+                    <h3>🎬 视频播放预览</h3>
+                    <div id="pcTestVideoInfo" style="margin-bottom:12px;font-size:13px;color:#555"></div>
+                    <video id="pcTestVideoPlayer" controls style="width:100%;max-height:450px;border-radius:10px;background:#000">您的浏览器不支持视频播放</video>
+                </div>
+                <div id="pcTestResponsePanel" class="panel" style="display:none">
+                    <h3>📝 响应预览</h3>
+                    <pre id="pcTestResponseContent" style="font-size:11px;background:#f8fafc;padding:12px;border-radius:6px;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
+                </div>
             </div>
-            <?php if (!empty($testResults)): ?>
-            <div class="panel">
-                <h3>📊 测试结果（<?php echo count($testResults); ?> 个接口）</h3>
-                <table class="data-table">
-                    <thead><tr><th>接口名称</th><th>HTTP 状态</th><th>响应时间</th><th>有效响应</th></tr></thead>
-                    <tbody>
-                    <?php foreach ($testResults as $r): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($r['name']); ?></td>
-                        <td><span class="badge <?php echo $r['code'] == 200 ? 'badge-green' : 'badge-red'; ?>"><?php echo (int)$r['code']; ?></span></td>
-                        <td><?php echo number_format($r['time'], 3); ?> 秒</td>
-                        <td><span class="badge <?php echo $r['valid'] ? 'badge-green' : 'badge-red'; ?>"><?php echo $r['valid'] ? '✅ 成功' : '❌ 失败'; ?></span></td>
-                    </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
+            <div id="pcTestLoading" style="display:none;text-align:center;padding:30px;color:#666">
+                <div style="font-size:16px;margin-bottom:8px">🔄 正在测试接口...</div>
+                <div id="pcTestProgress" style="font-size:13px;color:#888">准备中</div>
             </div>
-            <?php endif; ?>
         </div>
     </div>
 
@@ -2896,14 +3064,15 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         <h2>🚫 去广告配置</h2>
 
         <div class="tabs-nav" id="adConfigSubNav" style="margin-bottom:20px;background:linear-gradient(135deg,#fa709a 0%,#fee140 100%);padding:8px">
-            <button data-subtab="ac_md5_deep" class="active" style="color:white;background:rgba(255,255,255,0.15);border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔍 MD5 深度分析</button>
-            <button data-subtab="ac_overview" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">📊 总览</button>
+            <button data-subtab="ac_overview" class="active" style="color:white;background:rgba(255,255,255,0.15);border:none;padding:10px 18px;border-radius:10px;font-size:14px">📊 总览与设置</button>
+            <button data-subtab="ac_md5" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🎯 MD5指纹去广告</button>
+            <button data-subtab="ac_md5_deep" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔍 深度分析</button>
             <button data-subtab="ac_sites" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔗 资源站设置</button>
             <button data-subtab="ac_rules" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🚫 广告关键词规则</button>
             <button data-subtab="ac_sources" style="color:white;background:transparent;border:none;padding:10px 18px;border-radius:10px;font-size:14px">🔌 解析源管理</button>
         </div>
 
-        <div class="sub-tab-panel active" id="subtab-ac_md5_deep">
+        <div class="sub-tab-panel" id="subtab-ac_md5_deep" style="display:none">
             <?php
                 $mc_ac = $noadConfig;
                 $md5Enabled_ac = $mc_ac['md5_enabled'] ?? true;
@@ -3069,7 +3238,23 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <pre id="diag_raw_pre" style="background:#1f2937;color:#f9fafb;padding:12px;border-radius:6px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
                 </div>
             </div>
+        </div>
 
+        <div class="sub-tab-panel" id="subtab-ac_md5" style="display:none">
+            <?php
+                $mc_md5 = $noadConfig;
+                $md5Enabled_md5 = $mc_md5['md5_enabled'] ?? true;
+                $md5Repeat_md5 = $mc_md5['md5_repeat_threshold'] ?? 3;
+                $md5Concur_md5 = $mc_md5['md5_max_concurrency'] ?? 6;
+                $md5SegTime_md5 = $mc_md5['md5_segment_timeout'] ?? 15;
+                $md5Total_md5 = $mc_md5['md5_total_timeout'] ?? 60;
+                $md5KB_md5 = $mc_md5['md5_max_segment_kb'] ?? 5000;
+                $md5Proxy_md5 = $mc_md5['md5_use_proxy'] ?? true;
+                $md5Interval_md5 = $mc_md5['md5_min_interval_ms'] ?? 100;
+                $md5Learn_md5 = $mc_md5['md5_auto_learn'] ?? true;
+                $md5Clean_md5 = $mc_md5['md5_db_cleanup_days'] ?? 30;
+                $md5Debug_md5 = $mc_md5['md5_debug'] ?? false;
+            ?>
             <div class="panel">
                 <h3 style="margin-top:0;color:#4f46e5">🎯 MD5 指纹去广告 — 参数配置</h3>
                 <p style="color:#666;font-size:13px;margin:6px 0">
@@ -3082,25 +3267,25 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
                             <h4 style="margin:0 0 12px 0;color:#444">⚙️ 开关与调试</h4>
                             <div style="padding:4px 0;font-size:14px"><label>
-                                <input type="checkbox" name="md5_enabled" <?php echo $md5Enabled_ac ? 'checked' : ''; ?>> 启用 MD5 指纹去广告</label></div>
+                                <input type="checkbox" name="md5_enabled" <?php echo $md5Enabled_md5 ? 'checked' : ''; ?>> 启用 MD5 指纹去广告</label></div>
                             <div style="padding:4px 0;font-size:14px"><label>
-                                <input type="checkbox" name="md5_auto_learn" <?php echo $md5Learn_ac ? 'checked' : ''; ?>> 启用自动学习（记录新指纹）</label></div>
+                                <input type="checkbox" name="md5_auto_learn" <?php echo $md5Learn_md5 ? 'checked' : ''; ?>> 启用自动学习（记录新指纹）</label></div>
                             <div style="padding:4px 0;font-size:14px"><label>
-                                <input type="checkbox" name="md5_use_proxy" <?php echo $md5Proxy_ac ? 'checked' : ''; ?>> 使用代理池下载</label></div>
+                                <input type="checkbox" name="md5_use_proxy" <?php echo $md5Proxy_md5 ? 'checked' : ''; ?>> 使用代理池下载</label></div>
                             <div style="padding:4px 0;font-size:14px"><label>
-                                <input type="checkbox" name="md5_debug" <?php echo $md5Debug_ac ? 'checked' : ''; ?>> 调试模式</label></div>
+                                <input type="checkbox" name="md5_debug" <?php echo $md5Debug_md5 ? 'checked' : ''; ?>> 调试模式</label></div>
                         </div>
 
                         <div class="panel" style="background:#fafafa;border:1px dashed #e0e0e0;margin:0;padding:16px 20px">
                             <h4 style="margin:0 0 12px 0;color:#444">🎯 检测灵敏度</h4>
                             <div style="padding:4px 0;font-size:14px"><label>重复次数阈值：
                                 <input type="number" name="md5_repeat_threshold" min="2" max="10" step="1"
-                                    value="<?php echo (int)$md5Repeat_ac; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                                    value="<?php echo (int)$md5Repeat_md5; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
                                 <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">相同 MD5 出现 >= 此值 → 判定为广告（默认 3 次）</div>
                             </div>
                             <div style="padding:4px 0;font-size:14px"><label>单片段最大 KB：
                                 <input type="number" name="md5_max_segment_kb" min="500" max="50000" step="500"
-                                    value="<?php echo (int)$md5KB_ac; ?>" style="width:100px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                                    value="<?php echo (int)$md5KB_md5; ?>" style="width:100px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
                                 <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">超过此大小跳过（防止卡死）</div>
                             </div>
                         </div>
@@ -3114,18 +3299,18 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                             </div>
                             <div style="padding:4px 0;font-size:14px"><label>最大并发数：
                                 <input type="number" name="md5_max_concurrency" min="1" max="20" step="1"
-                                    value="<?php echo (int)$md5Concur_ac; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                                    value="<?php echo (int)$md5Concur_md5; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
                                 <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">实际根据 CPU/内存自动下调（默认 6）</div>
                             </div>
                             <div style="padding:4px 0;font-size:14px"><label>单片段超时（秒）：
                                 <input type="number" name="md5_segment_timeout" min="5" max="120" step="5"
-                                    value="<?php echo (int)$md5SegTime_ac; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                                    value="<?php echo (int)$md5SegTime_md5; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
                             <div style="padding:4px 0;font-size:14px"><label>总处理超时（秒）：
                                 <input type="number" name="md5_total_timeout" min="30" max="600" step="10"
-                                    value="<?php echo (int)$md5Total_ac; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
+                                    value="<?php echo (int)$md5Total_md5; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label></div>
                             <div style="padding:4px 0;font-size:14px"><label>最小请求间隔（ms）：
                                 <input type="number" name="md5_min_interval_ms" min="50" max="5000" step="50"
-                                    value="<?php echo (int)$md5Interval_ac; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                                    value="<?php echo (int)$md5Interval_md5; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
                                 <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">防止请求过快被封禁（默认 100ms）</div>
                             </div>
                         </div>
@@ -3134,10 +3319,10 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                             <h4 style="margin:0 0 12px 0;color:#444">🗄️ 数据库维护</h4>
                             <div style="padding:4px 0;font-size:14px"><label>自动清理周期（天）：
                                 <input type="number" name="md5_db_cleanup_days" min="7" max="365" step="7"
-                                    value="<?php echo (int)$md5Clean_ac; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
+                                    value="<?php echo (int)$md5Clean_md5; ?>" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px"></label>
                                 <div style="color:#999;font-size:12px;margin-left:16px;margin-top:4px">清理超过此天数的旧记录（默认 30 天）</div>
                             </div>
-                            <div id="md5StatsPanel_ac" style="margin-top:10px;padding:10px;background:#fff;border-radius:8px;border:1px solid #e5e7eb">
+                            <div id="md5StatsPanel_md5" style="margin-top:10px;padding:10px;background:#fff;border-radius:8px;border:1px solid #e5e7eb">
                                 <div style="font-size:12px;color:#888">点击右侧「📊 查看指纹库统计」按钮</div>
                             </div>
                         </div>
@@ -3147,7 +3332,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:10px 24px;background:#4f46e5">💾 保存 MD5 参数</button>
                         <button type="button" class="btn-primary-sm" onclick="md5TestCurrent()" style="font-size:14px;padding:10px 24px;background:#10b981">🧪 测试当前参数</button>
                         <button type="button" class="btn-primary-sm" onclick="
-                            var panel = document.getElementById('md5StatsPanel_ac');
+                            var panel = document.getElementById('md5StatsPanel_md5');
                             var origPanel = document.getElementById('md5StatsPanel');
                             if (origPanel) panel.innerHTML = origPanel.innerHTML;
                             md5LoadStats();
@@ -3155,12 +3340,12 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                         " style="font-size:14px;padding:10px 24px;background:#6366f1">📊 查看指纹库统计</button>
                         <button type="button" class="btn-primary-sm" onclick="md5ResetDefault()" style="font-size:14px;padding:10px 24px;background:#6b7280">↩ 恢复默认值</button>
                     </div>
-                    <div id="md5Result_ac" style="margin-top:20px;padding:14px;background:#f0f9ff;border-radius:8px;color:#075985;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:30px">💡 点击按钮开始测试...</div>
+                    <div id="md5Result_md5" style="margin-top:20px;padding:14px;background:#f0f9ff;border-radius:8px;color:#075985;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:30px">💡 点击按钮开始测试...</div>
                 </form>
             </div>
         </div>
 
-        <div class="sub-tab-panel" id="subtab-ac_overview" style="display:none">
+        <div class="sub-tab-panel active" id="subtab-ac_overview">
             <?php if (!$GLOBALS['db']): ?>
                 <div class="msg-box err">⚠️ SQLite 未加载或数据库不可用。</div>
             <?php else: ?>
@@ -3171,6 +3356,47 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <div class="stat-card v4"><div class="label">活跃解析源</div><div class="num"><?php echo count($noadSources); ?></div></div>
                 </div>
             <?php endif; ?>
+
+            <div class="panel" style="margin-bottom:20px;border:2px solid #10b981;background:#f0fdf4">
+                <h3 style="margin-top:0;color:#059669">📡 去广告 API 接口</h3>
+                <p style="color:#666;font-size:13px;margin:6px 0">
+                    <b>接口地址：</b>通过以下接口调用去广告解析服务
+                </p>
+                <div style="background:#fff;padding:12px 16px;border-radius:8px;border:1px solid #bbf7d0;margin:10px 0">
+                    <div style="font-size:13px;color:#555;margin-bottom:6px"><b>接口1：</b><code style="background:#ecfdf5;color:#047857;padding:2px 6px;border-radius:4px">/q.php?url=视频链接</code></div>
+                    <div style="font-size:13px;color:#555"><b>接口2：</b><code style="background:#ecfdf5;color:#047857;padding:2px 6px;border-radius:4px">/q?url=视频链接</code></div>
+                </div>
+                <div style="margin-top:14px">
+                    <label style="font-size:13px;color:#555;display:block;margin-bottom:6px"><b>🧪 API 调用示例与预览</b></label>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+                        <div style="flex:2;min-width:280px">
+                            <input type="text" id="api_preview_url" placeholder="输入视频链接，如：https://v.qq.com/x/cover/xxx.html" 
+                                style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
+                        </div>
+                        <div style="flex:1;min-width:120px">
+                            <select id="api_preview_type" style="width:100%;padding:10px;font-size:14px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box">
+                                <option value="q.php">/q.php?url=</option>
+                                <option value="q">/q?url=</option>
+                            </select>
+                        </div>
+                        <div style="flex:0">
+                            <button type="button" onclick="generateApiPreview()" 
+                                style="padding:10px 20px;font-size:14px;background:#10b981;color:white;border:none;border-radius:6px;cursor:pointer">🔗 生成接口链接</button>
+                        </div>
+                    </div>
+                    <div id="api_preview_result" style="display:none;margin-top:12px">
+                        <div style="font-size:13px;color:#555;margin-bottom:6px"><b>生成的接口链接：</b></div>
+                        <div style="display:flex;gap:10px;align-items:flex-start">
+                            <input type="text" id="api_preview_link" readonly 
+                                style="flex:1;padding:10px;font-family:monospace;font-size:13px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
+                            <button type="button" onclick="copyApiPreviewLink()" 
+                                style="padding:10px 16px;background:#6366f1;color:white;border:none;border-radius:6px;cursor:pointer;white-space:nowrap">📋 复制</button>
+                            <button type="button" onclick="openApiPreview()" 
+                                style="padding:10px 16px;background:#8b5cf6;color:white;border:none;border-radius:6px;cursor:pointer;white-space:nowrap">🔗 打开</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <form method="post">
                 <input type="hidden" name="action" value="save_noad_config">
@@ -3250,44 +3476,54 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
         <div class="sub-tab-panel" id="subtab-ac_rules" style="display:none">
             <p style="color:#666">当前阈值：命中 <strong><?php echo (int)($noadConfig['ad_keyword_threshold'] ?? 2); ?></strong> 条关键词的片段将被判定为广告。</p>
             <div class="panel">
-                <h3>➕ 添加自定义规则</h3>
-                <form method="post" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                    <input type="hidden" name="action" value="add_ad_rule">
-                    <input type="text" name="keyword" placeholder="例：ad_roll / promo / 片头广告" required style="flex:1;min-width:220px">
-                    <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">➕ 添加规则</button>
-                </form>
+                <h3 style="cursor:pointer;user-select:none;margin:0" onclick="toggleRuleSection(this)">
+                    <span style="display:inline-block;transition:transform 0.2s">▼</span> ➕ 添加自定义规则
+                </h3>
+                <div class="rule-section-content" style="margin-top:12px">
+                    <form method="post" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                        <input type="hidden" name="action" value="add_ad_rule">
+                        <input type="text" name="keyword" placeholder="例：ad_roll / promo / 片头广告" required style="flex:1;min-width:220px">
+                        <button type="submit" class="btn-primary-sm" style="font-size:14px;padding:8px 18px">➕ 添加规则</button>
+                    </form>
+                </div>
             </div>
             <div class="panel">
-                <h3>📝 默认内置规则</h3>
-                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                <h3 style="cursor:pointer;user-select:none;margin:0" onclick="toggleRuleSection(this)">
+                    <span style="display:inline-block;transition:transform 0.2s">▼</span> 📝 默认内置规则
+                </h3>
+                <div class="rule-section-content" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">
                     <?php foreach (($noadConfig['ad_keywords'] ?? []) as $kw): ?>
                         <span class="badge badge-yellow" style="font-size:13px;padding:6px 12px"><?php echo htmlspecialchars($kw); ?></span>
                     <?php endforeach; ?>
                 </div>
             </div>
             <div class="panel">
-                <h3>🗃️ 自定义规则库（共 <?php echo count($adRules); ?> 条）</h3>
-                <?php if (empty($adRules)): ?>
-                    <p style="color:#888">暂无自定义规则。</p>
-                <?php else: ?>
-                <table class="data-table">
-                    <thead><tr><th>ID</th><th>关键词</th><th>命中次数</th><th>状态</th><th>操作</th></tr></thead>
-                    <tbody>
-                    <?php foreach ($adRules as $r): ?>
-                    <tr>
-                        <td><?php echo (int)$r['id']; ?></td>
-                        <td><code class="monocode"><?php echo htmlspecialchars($r['keyword']); ?></code></td>
-                        <td><?php echo (int)($r['hit_count'] ?? 0); ?></td>
-                        <td><?php echo empty($r['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
-                        <td>
-                            <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
-                            <form method="post" style="display:inline" onsubmit="return confirm('确认删除规则 #<?php echo (int)$r['id']; ?>？')"><input type="hidden" name="action" value="delete_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-danger-sm">删除</button></form>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-                <?php endif; ?>
+                <h3 style="cursor:pointer;user-select:none;margin:0" onclick="toggleRuleSection(this)">
+                    <span style="display:inline-block;transition:transform 0.2s">▼</span> 🗃️ 自定义规则库（共 <?php echo count($adRules); ?> 条）
+                </h3>
+                <div class="rule-section-content" style="margin-top:12px">
+                    <?php if (empty($adRules)): ?>
+                        <p style="color:#888">暂无自定义规则。</p>
+                    <?php else: ?>
+                    <table class="data-table">
+                        <thead><tr><th>ID</th><th>关键词</th><th>命中次数</th><th>状态</th><th>操作</th></tr></thead>
+                        <tbody>
+                        <?php foreach ($adRules as $r): ?>
+                        <tr>
+                            <td><?php echo (int)$r['id']; ?></td>
+                            <td><code class="monocode"><?php echo htmlspecialchars($r['keyword']); ?></code></td>
+                            <td><?php echo (int)($r['hit_count'] ?? 0); ?></td>
+                            <td><?php echo empty($r['enabled']) ? '<span class="badge badge-red">关闭</span>' : '<span class="badge badge-green">启用</span>'; ?></td>
+                            <td>
+                                <form method="post" style="display:inline"><input type="hidden" name="action" value="toggle_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-secondary-sm">切换</button></form>
+                                <form method="post" style="display:inline" onsubmit="return confirm('确认删除规则 #<?php echo (int)$r['id']; ?>？')"><input type="hidden" name="action" value="delete_ad_rule"><input type="hidden" name="rule_id" value="<?php echo (int)$r['id']; ?>"><button type="submit" class="btn-danger-sm">删除</button></form>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
 
@@ -4057,15 +4293,19 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <p style="color:#888">暂无解析记录。</p>
                 <?php else: ?>
                 <table class="data-table">
-                    <thead><tr><th>ID</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th></tr></thead>
+                    <thead><tr><th>ID</th><th>时间</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th><th>总时长</th><th>IP</th><th>操作</th></tr></thead>
                     <tbody>
                     <?php foreach ($parseLogs as $l): ?>
                     <tr>
                         <td><?php echo (int)$l['id']; ?></td>
+                        <td><?php echo date('Y-m-d H:i:s', (int)($l['parse_time'] ?? 0)); ?></td>
                         <td><?php echo htmlspecialchars($l['site_name'] ?? ''); ?></td>
                         <td><?php echo (int)($l['total_segments'] ?? 0); ?></td>
                         <td style="color:#dc3545"><?php echo (int)($l['ad_segments'] ?? 0); ?></td>
                         <td style="color:#28a745"><?php echo (int)($l['keep_segments'] ?? 0); ?></td>
+                        <td><?php echo gmdate('H:i:s', (int)($l['total_duration'] ?? 0)); ?></td>
+                        <td><?php echo htmlspecialchars($l['ip'] ?? ''); ?></td>
+                        <td><button type="button" class="btn-secondary-sm" onclick="showParseLogDetail(<?php echo (int)$l['id']; ?>)" style="padding:4px 10px;font-size:12px">详情</button></td>
                     </tr>
                     <?php endforeach; ?>
                     </tbody>
@@ -4431,15 +4671,19 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <p style="color:#888">暂无解析记录。</p>
             <?php else: ?>
             <table class="data-table">
-                <thead><tr><th>ID</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th></tr></thead>
+                <thead><tr><th>ID</th><th>时间</th><th>站点</th><th>总片段</th><th>广告</th><th>保留</th><th>总时长</th><th>IP</th><th>操作</th></tr></thead>
                 <tbody>
                 <?php foreach ($parseLogs as $l): ?>
                 <tr>
                     <td><?php echo (int)$l['id']; ?></td>
+                    <td><?php echo date('Y-m-d H:i:s', (int)($l['parse_time'] ?? 0)); ?></td>
                     <td><?php echo htmlspecialchars($l['site_name'] ?? ''); ?></td>
                     <td><?php echo (int)($l['total_segments'] ?? 0); ?></td>
                     <td style="color:#dc3545"><?php echo (int)($l['ad_segments'] ?? 0); ?></td>
                     <td style="color:#28a745"><?php echo (int)($l['keep_segments'] ?? 0); ?></td>
+                    <td><?php echo gmdate('H:i:s', (int)($l['total_duration'] ?? 0)); ?></td>
+                    <td><?php echo htmlspecialchars($l['ip'] ?? ''); ?></td>
+                    <td><button type="button" class="btn-secondary-sm" onclick="showParseLogDetail(<?php echo (int)$l['id']; ?>)" style="padding:4px 10px;font-size:12px">详情</button></td>
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -4921,7 +5165,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                 <p style="color:#888">暂无日志。</p>
             <?php else: ?>
             <table class="data-table">
-                <thead><tr><th>时间</th><th>IP</th><th>来源</th><th>类型</th><th>广告移除</th><th>耗时</th><th>缓存</th></tr></thead>
+                <thead><tr><th>时间</th><th>IP</th><th>接口名称</th><th>类型</th><th>广告移除</th><th>耗时</th><th>缓存</th><th>状态</th></tr></thead>
                 <tbody>
                 <?php foreach ($recentLogs as $log): ?>
                 <tr>
@@ -4932,6 +5176,7 @@ function renderAdminPanel($page, $msg, $msgType, $d) {
                     <td><?php echo (int)($log['ad_segments_removed'] ?? 0); ?></td>
                     <td><?php echo number_format((float)($log['response_time'] ?? 0), 1); ?>ms</td>
                     <td><?php echo !empty($log['is_from_cache']) ? '<span class="badge badge-green">命中</span>' : '<span class="badge badge-blue">未</span>'; ?></td>
+                    <td><?php echo (!isset($log['status']) || $log['status'] === 'ok') ? '<span class="badge badge-green">成功</span>' : '<span class="badge badge-red">失败</span>'; ?></td>
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -6343,6 +6588,351 @@ https://cdn.example.com/video/part4.ts
         if (resultPanel) {
             resultPanel.style.display = 'none';
         }
+    }
+
+    function addApiRow() {
+        var tb = document.getElementById('apiTbody_new');
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td style="text-align:center"><input type="checkbox" name="api_enabled[]" value="1" checked style="width:18px;height:18px;cursor:pointer"></td>' +
+            '<td style="color:#999;text-align:center">+</td>' +
+            '<td><input type="text" name="api_name[]" placeholder="接口名称" style="width:100%"></td>' +
+            '<td><input type="text" name="api_url[]" placeholder="https://jx.example.com/?url=" style="width:100%"></td>' +
+            '<td><input type="number" name="api_timeout[]" value="5" min="1" max="120" style="width:100%"></td>' +
+            '<td class="center" style="display:flex;gap:6px;justify-content:center">' +
+            '<button type="button" class="btn-secondary-sm" onclick="testSingleApi(this)" style="padding:4px 10px;font-size:12px">🧪 测试</button>' +
+            '<button type="button" class="btn-danger-sm" onclick="this.closest(&quot;tr&quot;).remove()" style="padding:4px 10px;font-size:12px">删除</button></td>';
+        tb.appendChild(tr);
+    }
+
+    function testSingleApi(btn) {
+        var tr = btn.closest('tr');
+        var inputs = tr.querySelectorAll('input');
+        var enabled = inputs[0] && inputs[0].checked;
+        var name = inputs[1] ? inputs[1].value.trim() : '';
+        var url = inputs[2] ? inputs[2].value.trim() : '';
+        var timeout = inputs[3] ? parseInt(inputs[3].value) || 5 : 5;
+
+        if (url === '') {
+            alert('请先填写接口地址！');
+            return;
+        }
+
+        var testUrl = prompt('请输入测试视频地址（如腾讯视频、爱奇艺等VIP视频链接）：', 'https://www.iqiyi.com');
+        if (testUrl === null || testUrl.trim() === '') return;
+
+        btn.disabled = true;
+        btn.textContent = '🔄 测试中...';
+
+        var resultPanel = document.getElementById('singleTestResult');
+        var resultContent = document.getElementById('singleTestContent');
+        resultPanel.style.display = 'block';
+        resultContent.innerHTML = '<div style="text-align:center;padding:20px;color:#666">正在测试接口 ' + htmlEscape(name || '未命名') + '，请稍候...</div>';
+
+        var formData = new FormData();
+        formData.append('action', 'ajax_test_single_api');
+        formData.append('api_name', name);
+        formData.append('api_url', url);
+        formData.append('timeout', timeout);
+        formData.append('test_url', testUrl.trim());
+
+        fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.code === 200) {
+                var statusIcon = '';
+                var statusColor = '';
+                var statusText = '';
+                if (data.status === 'success') {
+                    statusIcon = '✅';
+                    statusColor = '#166534';
+                    statusText = '解析成功';
+                } else if (data.status === 'warning') {
+                    statusIcon = '⚠️';
+                    statusColor = '#854d0e';
+                    statusText = '部分异常';
+                } else {
+                    statusIcon = '❌';
+                    statusColor = '#991b1b';
+                    statusText = '测试失败';
+                }
+
+                var html = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">';
+                html += '<div style="background:' + (data.is_good ? '#dcfce7' : '#fee2e2') + ';padding:16px;border-radius:10px;text-align:center">';
+                html += '<div style="font-size:28px;font-weight:bold;color:' + statusColor + '">' + statusIcon + ' ' + statusText + '</div>';
+                html += '<div style="font-size:13px;color:' + statusColor + ';margin-top:4px">' + htmlEscape(data.message) + '</div>';
+                html += '</div>';
+                html += '<div style="background:#f0f7ff;padding:16px;border-radius:10px;text-align:center">';
+                html += '<div style="font-size:28px;font-weight:bold;color:#0066cc">' + data.elapsed_ms + 'ms</div>';
+                html += '<div style="font-size:13px;color:#0066cc;margin-top:4px">响应时间</div>';
+                html += '</div>';
+                html += '<div style="background:#f3e8ff;padding:16px;border-radius:10px;text-align:center">';
+                html += '<div style="font-size:28px;font-weight:bold;color:#7c3aed">HTTP ' + data.http_code + '</div>';
+                html += '<div style="font-size:13px;color:#7c3aed;margin-top:4px">状态码</div>';
+                html += '</div>';
+                html += '</div>';
+
+                if (data.video_url) {
+                    html += '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px;margin-bottom:12px">';
+                    html += '<div style="font-weight:bold;color:#166534;margin-bottom:8px">🎬 解析出的视频地址:</div>';
+                    html += '<div style="font-family:monospace;font-size:12px;background:white;padding:10px;border-radius:6px;word-break:break-all">' + htmlEscape(data.video_url) + '</div>';
+                    html += '</div>';
+                    html += '<video controls style="width:100%;max-height:400px;border-radius:10px;background:#000" src="' + htmlEscape(data.video_url) + '">您的浏览器不支持视频播放</video>';
+                }
+
+                if (data.response_preview) {
+                    html += '<div style="margin-top:16px"><div style="font-weight:bold;margin-bottom:8px;color:#374151">📝 响应预览:</div>';
+                    html += '<pre style="font-size:11px;background:#f8fafc;padding:10px;border-radius:6px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all">' + htmlEscape(data.response_preview) + '</pre></div>';
+                }
+
+                resultContent.innerHTML = html;
+            } else {
+                resultContent.innerHTML = '<div style="text-align:center;padding:20px;color:#dc2626">测试失败: ' + htmlEscape(data.msg || data.error || '未知错误') + '</div>';
+            }
+            btn.disabled = false;
+            btn.textContent = '🧪 测试';
+        })
+        .catch(function(err) {
+            resultContent.innerHTML = '<div style="text-align:center;padding:20px;color:#dc2626">网络错误: ' + htmlEscape(err.message) + '</div>';
+            btn.disabled = false;
+            btn.textContent = '🧪 测试';
+        });
+    }
+
+    function closeSingleTest() {
+        var resultPanel = document.getElementById('singleTestResult');
+        if (resultPanel) {
+            resultPanel.style.display = 'none';
+        }
+    }
+
+    var pcTestResults = [];
+
+    function runPcApiTest() {
+        var testUrl = document.getElementById('pcTestUrl').value.trim();
+        if (testUrl === '') {
+            alert('请输入视频链接！');
+            return;
+        }
+
+        var tbody = document.getElementById('apiTbody_new');
+        if (!tbody) {
+            alert('无法获取API列表！');
+            return;
+        }
+
+        var rows = tbody.querySelectorAll('tr');
+        var apis = [];
+        rows.forEach(function(row) {
+            var inputs = row.querySelectorAll('input');
+            if (inputs.length >= 3) {
+                var name = inputs[1] ? inputs[1].value.trim() : '';
+                var url = inputs[2] ? inputs[2].value.trim() : '';
+                var timeout = inputs[3] ? parseInt(inputs[3].value) || 5 : 5;
+                var enabled = inputs[0] ? inputs[0].checked : true;
+                if (url !== '' && enabled) {
+                    apis.push({ name: name, url: url, timeout: timeout });
+                }
+            }
+        });
+
+        if (apis.length === 0) {
+            alert('没有可用的接口！请先在API线路配置中添加接口。');
+            return;
+        }
+
+        pcTestResults = [];
+        document.getElementById('pcTestLoading').style.display = 'block';
+        document.getElementById('pcTestResult').style.display = 'none';
+        document.getElementById('pcTestVideoPanel').style.display = 'none';
+        document.getElementById('pcTestResponsePanel').style.display = 'none';
+        document.getElementById('pcTestProgress').textContent = '准备中 (0/' + apis.length + ')';
+
+        var completed = 0;
+        var successCount = 0;
+        var failCount = 0;
+
+        function testNext(index) {
+            if (index >= apis.length) {
+                document.getElementById('pcTestLoading').style.display = 'none';
+                document.getElementById('pcTestResult').style.display = 'block';
+                renderPcTestSummary(successCount, failCount, apis.length);
+                renderPcTestTable();
+                return;
+            }
+
+            var api = apis[index];
+            document.getElementById('pcTestProgress').textContent =
+                '正在测试 ' + (api.name || '接口' + (index + 1)) + ' (' + (index + 1) + '/' + apis.length + ')';
+
+            var formData = new FormData();
+            formData.append('action', 'ajax_test_single_api');
+            formData.append('api_name', api.name);
+            formData.append('api_url', api.url);
+            formData.append('timeout', api.timeout);
+            formData.append('test_url', testUrl);
+
+            fetch(window.location.href, {
+                method: 'POST',
+                body: formData
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var result = {
+                    index: index,
+                    name: api.name || ('接口' + (index + 1)),
+                    url: api.url,
+                    status: data.status || 'error',
+                    is_good: data.is_good || false,
+                    http_code: data.http_code || 0,
+                    elapsed_ms: data.elapsed_ms || 0,
+                    message: data.message || '',
+                    video_url: data.video_url || '',
+                    response_preview: data.response_preview || ''
+                };
+                pcTestResults.push(result);
+                if (result.is_good) successCount++;
+                else failCount++;
+                completed++;
+                testNext(index + 1);
+            })
+            .catch(function(err) {
+                pcTestResults.push({
+                    index: index,
+                    name: api.name || ('接口' + (index + 1)),
+                    url: api.url,
+                    status: 'error',
+                    is_good: false,
+                    http_code: 0,
+                    elapsed_ms: 0,
+                    message: '网络错误: ' + err.message,
+                    video_url: '',
+                    response_preview: ''
+                });
+                failCount++;
+                completed++;
+                testNext(index + 1);
+            });
+        }
+
+        testNext(0);
+    }
+
+    function renderPcTestSummary(success, fail, total) {
+        var summary = document.getElementById('pcTestSummary');
+        summary.innerHTML =
+            '<div style="background:#dcfce7;padding:14px;border-radius:10px;text-align:center">' +
+                '<div style="font-size:24px;font-weight:bold;color:#166534">' + success + '</div>' +
+                '<div style="font-size:12px;color:#166534">✅ 成功</div>' +
+            '</div>' +
+            '<div style="background:#fee2e2;padding:14px;border-radius:10px;text-align:center">' +
+                '<div style="font-size:24px;font-weight:bold;color:#991b1b">' + fail + '</div>' +
+                '<div style="font-size:12px;color:#991b1b">❌ 失败</div>' +
+            '</div>' +
+            '<div style="background:#f0f7ff;padding:14px;border-radius:10px;text-align:center">' +
+                '<div style="font-size:24px;font-weight:bold;color:#0066cc">' + total + '</div>' +
+                '<div style="font-size:12px;color:#0066cc">📦 总计</div>' +
+            '</div>';
+    }
+
+    function renderPcTestTable() {
+        var tbody = document.getElementById('pcTestTbody');
+        tbody.innerHTML = '';
+        pcTestResults.sort(function(a, b) {
+            if (a.is_good !== b.is_good) return b.is_good - a.is_good;
+            return a.elapsed_ms - b.elapsed_ms;
+        });
+        pcTestResults.forEach(function(r) {
+            var statusIcon = r.is_good ? '✅' : '❌';
+            var tr = document.createElement('tr');
+            tr.style.background = r.is_good ? '#f0fdf4' : '#fef2f2';
+            tr.innerHTML =
+                '<td style="font-size:18px">' + statusIcon + '</td>' +
+                '<td>' + htmlEscape(r.name) + '</td>' +
+                '<td>HTTP ' + r.http_code + '</td>' +
+                '<td>' + r.elapsed_ms + 'ms</td>' +
+                '<td style="white-space:nowrap">' +
+                    '<button type="button" class="btn-secondary-sm" onclick="showPcTestVideo(' + r.index + ')" style="padding:4px 8px;font-size:11px;margin-right:4px">播放</button>' +
+                    '<button type="button" class="btn-secondary-sm" onclick="showPcTestResponse(' + r.index + ')" style="padding:4px 8px;font-size:11px">响应</button>' +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    function showPcTestVideo(index) {
+        var result = pcTestResults.find(function(r) { return r.index === index; });
+        if (!result) return;
+
+        var panel = document.getElementById('pcTestVideoPanel');
+        var info = document.getElementById('pcTestVideoInfo');
+        var player = document.getElementById('pcTestVideoPlayer');
+
+        if (result.video_url) {
+            panel.style.display = 'block';
+            info.innerHTML = '<strong>接口：</strong>' + htmlEscape(result.name) +
+                ' | <strong>耗时：</strong>' + result.elapsed_ms + 'ms' +
+                ' | <strong>状态：</strong>' + (result.is_good ? '成功' : '失败');
+            player.src = result.video_url;
+            player.play().catch(function() {});
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+            alert('该接口未解析出视频地址！\n\n' + (result.message || ''));
+        }
+    }
+
+    function showPcTestResponse(index) {
+        var result = pcTestResults.find(function(r) { return r.index === index; });
+        if (!result) return;
+
+        var panel = document.getElementById('pcTestResponsePanel');
+        var content = document.getElementById('pcTestResponseContent');
+
+        panel.style.display = 'block';
+        content.textContent = '接口: ' + result.name + '\n' +
+            '地址: ' + result.url + '\n' +
+            '状态: ' + result.status + ' (HTTP ' + result.http_code + ')\n' +
+            '耗时: ' + result.elapsed_ms + 'ms\n' +
+            '消息: ' + (result.message || '') + '\n' +
+            '--- 响应预览 ---\n' + (result.response_preview || '(无响应内容)');
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function showParseLogDetail(id) {
+        alert('解析日志详情功能开发中...\n日志ID: ' + id);
+    }
+
+    function addPlatformRow() {
+        var tb = document.getElementById('platTbody_new');
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td><input type="text" name="platform_name[]" placeholder="平台名" style="width:100%"></td><td><input type="text" name="platform_rule[]" placeholder="域名关键字|接口名" style="width:100%"></td><td><button type="button" class="btn-danger-sm" onclick="this.closest(&quot;tr&quot;).remove()">删除</button></td>';
+        tb.appendChild(tr);
+    }
+
+    function resetDefaultPlatforms() {
+        if (!confirm('确定要恢复默认5大平台规则吗？当前列表将被替换。')) return;
+        var defaults = [
+            { name: '腾讯视频', rule: 'v.qq.com|MyJson1-VIP' },
+            { name: '爱奇艺', rule: 'iqiyi.com|MyJson2-VIP' },
+            { name: '优酷', rule: 'youku.com|MyJson6-VIP' },
+            { name: '芒果TV', rule: 'mgtv.com|MyJson5-VIP' },
+            { name: '哔哩哔哩', rule: 'bilibili.com|MyJson5-VIP' },
+            { name: 'PPTV', rule: 'pptv.com|MyJson1-VIP' },
+            { name: '乐视', rule: 'le.com|MyJson2-VIP' },
+            { name: '搜狐视频', rule: 'sohu.com|MyJson3-VIP' },
+            { name: 'M1905电影网', rule: '1905.com|MyJson4-VIP' },
+            { name: '西瓜视频', rule: 'ixigua.com|MyJson6-VIP' },
+            { name: 'AcFun', rule: 'acfun.cn|MyJson1-VIP' },
+            { name: '抖音', rule: 'douyin.com|MyJson4-VIP' },
+        ];
+        var tb = document.getElementById('platTbody_new');
+        tb.innerHTML = '';
+        defaults.forEach(function(p) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><input type="text" name="platform_name[]" value="' + htmlEscape(p.name) + '" style="width:100%"></td><td><input type="text" name="platform_rule[]" value="' + htmlEscape(p.rule) + '" style="width:100%"></td><td><button type="button" class="btn-danger-sm" onclick="this.closest(&quot;tr&quot;).remove()">删除</button></td>';
+            tb.appendChild(tr);
+        });
     }
 
     function checkOnlineUpdate() {
@@ -8454,6 +9044,64 @@ function restoreFromAutoSave(actionName) {
         alert('✓ 已还原上次自动保存（共 ' + restoredCount + ' 项）');
     } catch (e) {
         alert('还原失败：' + e.message);
+    }
+}
+
+function generateApiPreview() {
+    var urlInput = document.getElementById('api_preview_url');
+    var typeSelect = document.getElementById('api_preview_type');
+    var resultDiv = document.getElementById('api_preview_result');
+    var linkInput = document.getElementById('api_preview_link');
+    
+    if (!urlInput || !typeSelect || !resultDiv || !linkInput) return;
+    
+    var videoUrl = urlInput.value.trim();
+    if (!videoUrl) {
+        alert('请输入视频链接');
+        return;
+    }
+    
+    var basePath = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
+    var apiType = typeSelect.value;
+    var apiUrl = basePath + apiType + '?url=' + encodeURIComponent(videoUrl);
+    
+    linkInput.value = apiUrl;
+    resultDiv.style.display = 'block';
+}
+
+function copyApiPreviewLink() {
+    var linkInput = document.getElementById('api_preview_link');
+    if (!linkInput) return;
+    
+    linkInput.select();
+    document.execCommand('copy');
+    
+    var btn = event.target;
+    var originalText = btn.textContent;
+    btn.textContent = '✓ 已复制';
+    setTimeout(function() {
+        btn.textContent = originalText;
+    }, 1500);
+}
+
+function openApiPreview() {
+    var linkInput = document.getElementById('api_preview_link');
+    if (!linkInput || !linkInput.value) return;
+    
+    window.open(linkInput.value, '_blank');
+}
+
+function toggleRuleSection(headerEl) {
+    var content = headerEl.nextElementSibling;
+    var arrow = headerEl.querySelector('span');
+    if (!content) return;
+    
+    if (content.style.display === 'none') {
+        content.style.display = '';
+        if (arrow) arrow.style.transform = 'rotate(0deg)';
+    } else {
+        content.style.display = 'none';
+        if (arrow) arrow.style.transform = 'rotate(-90deg)';
     }
 }
 </script>
